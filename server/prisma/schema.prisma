@@ -7,9 +7,486 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-model HealthCheck {
+enum Role {
+  USER
+  ADMIN
+}
+
+enum AccountStatus {
+  ACTIVE
+  SUSPENDED
+  DEACTIVATED
+}
+
+enum TransactionType {
+  INCOME
+  EXPENSE
+}
+
+enum CategoryType {
+  INCOME
+  EXPENSE
+}
+
+enum Frequency {
+  DAILY
+  WEEKLY
+  MONTHLY
+}
+
+enum GoalStatus {
+  ACTIVE
+  COMPLETED
+  PAUSED
+  CANCELLED
+}
+
+enum GoalPriority {
+  LOW
+  MEDIUM
+  HIGH
+}
+
+enum BillStatus {
+  PENDING
+  PAID
+  OVERDUE
+  CANCELLED
+}
+
+enum SubscriptionStatus {
+  ACTIVE
+  PAUSED
+  CANCELLED
+  EXPIRED
+}
+
+enum ChallengeDifficulty {
+  EASY
+  MEDIUM
+  HARD
+}
+
+enum ChallengeStatus {
+  NOT_STARTED
+  IN_PROGRESS
+  COMPLETED
+  FAILED
+}
+
+enum AuthTokenType {
+  EMAIL_VERIFICATION
+  PASSWORD_RESET
+}
+
+model User {
+  id              String        @id @default(cuid())
+  email           String        @unique
+  passwordHash    String
+  firstName       String
+  lastName        String
+  role            Role          @default(USER)
+  status          AccountStatus @default(ACTIVE)
+  emailVerifiedAt DateTime?
+  lastLoginAt     DateTime?
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  sessions              Session[]
+  authTokens            AuthToken[]
+  financialProfile      FinancialProfile?
+  categories            Category[]
+  transactions          Transaction[]
+  budgets               Budget[]
+  habits                FinancialHabit[]
+  goals                 SavingsGoal[]
+  assets                Asset[]
+  liabilities           Liability[]
+  wealthSnapshots       WealthSnapshot[]
+  bills                 Bill[]
+  subscriptions         Subscription[]
+  challengeParticipants ChallengeParticipant[]
+  notifications         Notification[]
+  feedback              Feedback[]
+  auditLogs             AuditLog[]
+
+  @@index([email])
+  @@map("users")
+}
+
+model Session {
+  id               String    @id @default(cuid())
+  userId           String
+  refreshTokenHash String
+  expiresAt        DateTime
+  revokedAt        DateTime?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([expiresAt])
+  @@map("sessions")
+}
+
+model AuthToken {
+  id        String        @id @default(cuid())
+  userId    String
+  tokenHash String
+  type      AuthTokenType
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime      @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([type])
+  @@index([expiresAt])
+  @@map("auth_tokens")
+}
+
+model FinancialProfile {
+  id                   String   @id @default(cuid())
+  userId               String   @unique
+  currency             String   @default("USD")
+  monthlyIncomeTarget  Decimal? @db.Decimal(15, 2)
+  monthlySavingsTarget Decimal? @db.Decimal(15, 2)
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("financial_profiles")
+}
+
+model Category {
+  id        String       @id @default(cuid())
+  userId    String?
+  name      String
+  type      CategoryType
+  icon      String?
+  color     String?
+  isDefault Boolean      @default(false)
+  createdAt DateTime     @default(now())
+  updatedAt DateTime     @updatedAt
+
+  user             User?            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  transactions     Transaction[]
+  budgetCategories BudgetCategory[]
+
+  @@unique([userId, name])
+  @@index([userId])
+  @@index([type])
+  @@map("categories")
+}
+
+model Transaction {
+  id              String          @id @default(cuid())
+  userId          String
+  categoryId      String
+  type            TransactionType
+  amount          Decimal         @db.Decimal(15, 2)
+  description     String?
+  transactionDate DateTime
+  paymentMethod   String?
+  notes           String?
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+
+  user     User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  category Category @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+
+  @@index([userId])
+  @@index([categoryId])
+  @@index([transactionDate])
+  @@index([userId, transactionDate])
+  @@map("transactions")
+}
+
+model Budget {
   id        String   @id @default(cuid())
-  status    String
-  timestamp DateTime @default(now())
-  @@map("health_checks")
+  userId    String
+  name      String
+  amount    Decimal  @db.Decimal(15, 2)
+  month     DateTime
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user             User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  budgetCategories BudgetCategory[]
+
+  @@unique([userId, month, name])
+  @@index([userId])
+  @@index([month])
+  @@map("budgets")
+}
+
+model BudgetCategory {
+  id              String  @id @default(cuid())
+  budgetId        String
+  categoryId      String
+  allocatedAmount Decimal @db.Decimal(15, 2)
+
+  budget   Budget   @relation(fields: [budgetId], references: [id], onDelete: Cascade)
+  category Category @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+
+  @@unique([budgetId, categoryId])
+  @@map("budget_categories")
+}
+
+model FinancialHabit {
+  id           String    @id @default(cuid())
+  userId       String
+  name         String
+  description  String?
+  frequency    Frequency
+  category     String?
+  reminderTime DateTime?
+  startDate    DateTime
+  isActive     Boolean   @default(true)
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  user        User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  completions HabitCompletion[]
+
+  @@index([userId])
+  @@index([isActive])
+  @@map("financial_habits")
+}
+
+model HabitCompletion {
+  id             String   @id @default(cuid())
+  habitId        String
+  completionDate DateTime
+  completedAt    DateTime @default(now())
+
+  habit FinancialHabit @relation(fields: [habitId], references: [id], onDelete: Cascade)
+
+  @@unique([habitId, completionDate])
+  @@index([habitId])
+  @@index([completionDate])
+  @@map("habit_completions")
+}
+
+model SavingsGoal {
+  id                  String       @id @default(cuid())
+  userId              String
+  name                String
+  description         String?
+  targetAmount        Decimal      @db.Decimal(15, 2)
+  currentAmount       Decimal      @default(0) @db.Decimal(15, 2)
+  targetDate          DateTime
+  category            String
+  priority            GoalPriority @default(MEDIUM)
+  status              GoalStatus   @default(ACTIVE)
+  monthlyContribution Decimal?     @db.Decimal(15, 2)
+  createdAt           DateTime     @default(now())
+  updatedAt           DateTime     @updatedAt
+
+  user          User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  contributions GoalContribution[]
+
+  @@index([userId])
+  @@index([status])
+  @@index([targetDate])
+  @@map("savings_goals")
+}
+
+model GoalContribution {
+  id               String   @id @default(cuid())
+  goalId           String
+  amount           Decimal  @db.Decimal(15, 2)
+  contributionDate DateTime
+  note             String?
+  createdAt        DateTime @default(now())
+
+  goal SavingsGoal @relation(fields: [goalId], references: [id], onDelete: Cascade)
+
+  @@index([goalId])
+  @@index([contributionDate])
+  @@map("goal_contributions")
+}
+
+model Asset {
+  id            String   @id @default(cuid())
+  userId        String
+  name          String
+  type          String
+  currentValue  Decimal  @db.Decimal(15, 2)
+  purchaseValue Decimal? @db.Decimal(15, 2)
+  institution   String?
+  notes         String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("assets")
+}
+
+model Liability {
+  id                String    @id @default(cuid())
+  userId            String
+  name              String
+  type              String
+  outstandingAmount Decimal   @db.Decimal(15, 2)
+  originalAmount    Decimal?  @db.Decimal(15, 2)
+  interestRate      Decimal?  @db.Decimal(5, 4)
+  dueDate           DateTime?
+  notes             String?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("liabilities")
+}
+
+model WealthSnapshot {
+  id               String   @id @default(cuid())
+  userId           String
+  snapshotDate     DateTime
+  totalAssets      Decimal  @db.Decimal(15, 2)
+  totalLiabilities Decimal  @db.Decimal(15, 2)
+  netWorth         Decimal  @db.Decimal(15, 2)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, snapshotDate])
+  @@index([userId])
+  @@map("wealth_snapshots")
+}
+
+model Bill {
+  id          String     @id @default(cuid())
+  userId      String
+  name        String
+  category    String?
+  amount      Decimal    @db.Decimal(15, 2)
+  frequency   Frequency
+  dueDate     DateTime
+  nextDueDate DateTime
+  status      BillStatus @default(PENDING)
+  autoPay     Boolean    @default(false)
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([nextDueDate])
+  @@map("bills")
+}
+
+model Subscription {
+  id              String             @id @default(cuid())
+  userId          String
+  name            String
+  category        String?
+  amount          Decimal            @db.Decimal(15, 2)
+  billingCycle    Frequency
+  nextRenewalDate DateTime
+  status          SubscriptionStatus @default(ACTIVE)
+  createdAt       DateTime           @default(now())
+  updatedAt       DateTime           @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([nextRenewalDate])
+  @@map("subscriptions")
+}
+
+model Challenge {
+  id          String              @id @default(cuid())
+  name        String
+  description String
+  category    String
+  difficulty  ChallengeDifficulty
+  points      Int
+  startDate   DateTime?
+  endDate     DateTime?
+  isActive    Boolean             @default(true)
+  createdAt   DateTime            @default(now())
+  updatedAt   DateTime            @updatedAt
+
+  participants ChallengeParticipant[]
+
+  @@index([isActive])
+  @@map("challenges")
+}
+
+model ChallengeParticipant {
+  id          String          @id @default(cuid())
+  challengeId String
+  userId      String
+  progress    Int             @default(0)
+  status      ChallengeStatus @default(NOT_STARTED)
+  joinedAt    DateTime        @default(now())
+  completedAt DateTime?
+
+  challenge Challenge @relation(fields: [challengeId], references: [id], onDelete: Cascade)
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([challengeId, userId])
+  @@index([challengeId])
+  @@index([userId])
+  @@map("challenge_participants")
+}
+
+model Notification {
+  id        String    @id @default(cuid())
+  userId    String
+  type      String
+  title     String
+  message   String
+  isRead    Boolean   @default(false)
+  createdAt DateTime  @default(now())
+  readAt    DateTime?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([isRead])
+  @@index([createdAt])
+  @@map("notifications")
+}
+
+model Feedback {
+  id        String   @id @default(cuid())
+  userId    String
+  subject   String
+  message   String
+  status    String   @default("PENDING")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([status])
+  @@map("feedback")
+}
+
+model AuditLog {
+  id          String   @id @default(cuid())
+  actorUserId String?
+  action      String
+  entityType  String
+  entityId    String?
+  metadata    Json?
+  createdAt   DateTime @default(now())
+  User        User?    @relation(fields: [userId], references: [id])
+  userId      String?
+
+  @@index([actorUserId])
+  @@index([entityType])
+  @@index([entityId])
+  @@index([createdAt])
+  @@map("audit_logs")
 }
