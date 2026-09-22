@@ -108,7 +108,7 @@ model User {
   challengeParticipants ChallengeParticipant[]
   notifications         Notification[]
   feedback              Feedback[]
-  auditLogs             AuditLog[]
+  auditLogs             AuditLog[]             @relation("actorAuditLogs")
 
   @@index([email])
   @@map("users")
@@ -481,8 +481,8 @@ model AuditLog {
   entityId    String?
   metadata    Json?
   createdAt   DateTime @default(now())
-  User        User?    @relation(fields: [userId], references: [id])
-  userId      String?
+
+  actor User? @relation("actorAuditLogs", fields: [actorUserId], references: [id], onDelete: SetNull)
 
   @@index([actorUserId])
   @@index([entityType])
