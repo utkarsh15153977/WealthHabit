@@ -115,18 +115,21 @@ model User {
 }
 
 model Session {
-  id               String    @id @default(cuid())
-  userId           String
-  refreshTokenHash String
-  expiresAt        DateTime
-  revokedAt        DateTime?
-  createdAt        DateTime  @default(now())
-  updatedAt        DateTime  @updatedAt
+  id                     String    @id @default(cuid())
+  userId                 String
+  refreshTokenHash       String
+  previousRefreshTokenHash String?
+  tokenFamilyId          String
+  expiresAt              DateTime
+  revokedAt              DateTime?
+  createdAt              DateTime  @default(now())
+  updatedAt              DateTime  @updatedAt
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId])
   @@index([expiresAt])
+  @@index([tokenFamilyId])
   @@map("sessions")
 }
 

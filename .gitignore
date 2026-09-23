@@ -29,8 +29,5 @@ docker-compose.override.yml
 *.log
 npm-debug.log*
 
-# Prisma
-server/prisma/migrations/
-
 # TypeScript
 *.tsbuildinfo
