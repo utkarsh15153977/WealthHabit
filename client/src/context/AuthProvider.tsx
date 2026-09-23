@@ -33,6 +33,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setAccessTokenState(null);
   }, []);
 
+  const updateUser = useCallback((nextUser: User) => {
+    setUser(nextUser);
+  }, []);
+
   const refreshSession = useCallback(async (): Promise<boolean> => {
     try {
       const token = await refreshRequest();
@@ -120,8 +124,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       logout,
       logoutAll,
       refreshSession,
+      updateUser,
     }),
-    [user, accessToken, isLoading, login, register, logout, logoutAll, refreshSession]
+    [user, accessToken, isLoading, login, register, logout, logoutAll, refreshSession, updateUser]
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

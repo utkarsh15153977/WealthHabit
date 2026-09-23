@@ -8,6 +8,7 @@ const Home = lazy(() => import('../pages/Home').then((m) => ({ default: m.Home }
 const Login = lazy(() => import('../pages/Login').then((m) => ({ default: m.Login })));
 const Register = lazy(() => import('../pages/Register').then((m) => ({ default: m.Register })));
 const Dashboard = lazy(() => import('../pages/Dashboard').then((m) => ({ default: m.Dashboard })));
+const Profile = lazy(() => import('../pages/Profile').then((m) => ({ default: m.Profile })));
 
 export const routes: RouteObject[] = [
   {
@@ -38,7 +39,15 @@ export const routes: RouteObject[] = [
       </ProtectedRoute>
     ),
   },
+  {
+    path: '/profile',
+    element: (
+      <ProtectedRoute>
+        {createElement(WithSuspense(Profile))}
+      </ProtectedRoute>
+    ),
+  },
 ];
 
 export const publicRoutes = ['/', '/login', '/register'];
-export const protectedRoutes = ['/dashboard'];
+export const protectedRoutes = ['/dashboard', '/profile'];
