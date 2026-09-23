@@ -1,19 +1,32 @@
-import { Link } from 'react-router-dom';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { Mail, Lock, Eye, EyeOff } from 'lucide-react';
 import { useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
+import { useAuth } from '../context/useAuth';
+import { getApiErrorMessage } from '../services/error';
 
 const loginSchema = z.object({
-  email: z.string().email('Invalid email address'),
+  email: z.string().trim().email('Invalid email address'),
   password: z.string().min(8, 'Password must be at least 8 characters'),
 });
 
 type LoginForm = z.infer<typeof loginSchema>;
 
+interface LocationState {
+  from?: {
+    pathname?: string;
+    search?: string;
+  };
+}
+
 export function Login() {
   const [showPassword, setShowPassword] = useState(false);
+  const [serverError, setServerError] = useState<string | null>(null);
+  const { login } = useAuth();
+  const navigate = useNavigate();
+  const location = useLocation();
   const {
     register,
     handleSubmit,
@@ -22,8 +35,19 @@ export function Login() {
     resolver: zodResolver(loginSchema),
   });
 
+  const from = (location.state as LocationState | null)?.from;
+  const redirectTo = from?.pathname
+    ? `${from.pathname}${from.search ?? ''}`
+    : '/dashboard';
+
   const onSubmit = async (data: LoginForm) => {
-    console.log('Login:', data);
+    setServerError(null);
+    try {
+      await login(data);
+      navigate(redirectTo, { replace: true });
+    } catch (error) {
+      setServerError(getApiErrorMessage(error));
+    }
   };
 
   return (
@@ -44,6 +68,12 @@ export function Login() {
         <div className="card">
           <div className="card-body">
             <form onSubmit={handleSubmit(onSubmit)} className="space-y-5">
+              {serverError && (
+                <div className="rounded-lg border border-error bg-red-50 px-4 py-3 text-sm text-error" role="alert">
+                  {serverError}
+                </div>
+              )}
+
               <div>
                 <label htmlFor="email" className="label">Email</label>
                 <div className="relative">
@@ -121,10 +151,6 @@ export function Login() {
             </p>
           </div>
         </div>
-
-        <p className="text-center text-xs text-text-muted mt-6">
-          Demo placeholder — authentication not implemented yet
-        </p>
       </div>
     </div>
   );

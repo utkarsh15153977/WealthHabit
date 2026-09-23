@@ -1,24 +1,43 @@
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { Mail, Lock, User, Eye, EyeOff } from 'lucide-react';
 import { useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
+import { useAuth } from '../context/useAuth';
+import { getApiErrorMessage } from '../services/error';
 
-const registerSchema = z.object({
-  name: z.string().min(2, 'Name must be at least 2 characters'),
-  email: z.string().email('Invalid email address'),
-  password: z.string().min(8, 'Password must be at least 8 characters'),
-  confirmPassword: z.string(),
-}).refine((data) => data.password === data.confirmPassword, {
-  message: 'Passwords do not match',
-  path: ['confirmPassword'],
-});
+const registerSchema = z
+  .object({
+    firstName: z
+      .string()
+      .trim()
+      .min(1, 'First name is required')
+      .max(50, 'First name must be at most 50 characters'),
+    lastName: z
+      .string()
+      .trim()
+      .min(1, 'Last name is required')
+      .max(50, 'Last name must be at most 50 characters'),
+    email: z.string().trim().email('Invalid email address'),
+    password: z
+      .string()
+      .min(8, 'Password must be at least 8 characters')
+      .max(128, 'Password must be at most 128 characters'),
+    confirmPassword: z.string(),
+  })
+  .refine((data) => data.password === data.confirmPassword, {
+    message: 'Passwords do not match',
+    path: ['confirmPassword'],
+  });
 
 type RegisterForm = z.infer<typeof registerSchema>;
 
 export function Register() {
   const [showPassword, setShowPassword] = useState(false);
+  const [serverError, setServerError] = useState<string | null>(null);
+  const { register: registerUser } = useAuth();
+  const navigate = useNavigate();
   const {
     register,
     handleSubmit,
@@ -28,7 +47,18 @@ export function Register() {
   });
 
   const onSubmit = async (data: RegisterForm) => {
-    console.log('Register:', data);
+    setServerError(null);
+    try {
+      await registerUser({
+        firstName: data.firstName,
+        lastName: data.lastName,
+        email: data.email,
+        password: data.password,
+      });
+      navigate('/dashboard', { replace: true });
+    } catch (error) {
+      setServerError(getApiErrorMessage(error));
+    }
   };
 
   return (
@@ -49,25 +79,56 @@ export function Register() {
         <div className="card">
           <div className="card-body">
             <form onSubmit={handleSubmit(onSubmit)} className="space-y-5">
-              <div>
-                <label htmlFor="name" className="label">Full Name</label>
-                <div className="relative">
-                  <User className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-text-muted" aria-hidden="true" />
-                  <input
-                    id="name"
-                    type="text"
-                    className={`input pl-10 ${errors.name ? 'input-error' : ''}`}
-                    placeholder="John Doe"
-                    {...register('name')}
-                    aria-invalid={errors.name ? 'true' : 'false'}
-                    aria-describedby={errors.name ? 'name-error' : undefined}
-                  />
+              {serverError && (
+                <div className="rounded-lg border border-error bg-red-50 px-4 py-3 text-sm text-error" role="alert">
+                  {serverError}
                 </div>
-                {errors.name && (
-                  <p id="name-error" className="mt-1.5 text-sm text-error" role="alert">
-                    {errors.name.message}
-                  </p>
-                )}
+              )}
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                  <label htmlFor="firstName" className="label">First Name</label>
+                  <div className="relative">
+                    <User className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-text-muted" aria-hidden="true" />
+                    <input
+                      id="firstName"
+                      type="text"
+                      autoComplete="given-name"
+                      className={`input pl-10 ${errors.firstName ? 'input-error' : ''}`}
+                      placeholder="John"
+                      {...register('firstName')}
+                      aria-invalid={errors.firstName ? 'true' : 'false'}
+                      aria-describedby={errors.firstName ? 'firstName-error' : undefined}
+                    />
+                  </div>
+                  {errors.firstName && (
+                    <p id="firstName-error" className="mt-1.5 text-sm text-error" role="alert">
+                      {errors.firstName.message}
+                    </p>
+                  )}
+                </div>
+
+                <div>
+                  <label htmlFor="lastName" className="label">Last Name</label>
+                  <div className="relative">
+                    <User className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-text-muted" aria-hidden="true" />
+                    <input
+                      id="lastName"
+                      type="text"
+                      autoComplete="family-name"
+                      className={`input pl-10 ${errors.lastName ? 'input-error' : ''}`}
+                      placeholder="Doe"
+                      {...register('lastName')}
+                      aria-invalid={errors.lastName ? 'true' : 'false'}
+                      aria-describedby={errors.lastName ? 'lastName-error' : undefined}
+                    />
+                  </div>
+                  {errors.lastName && (
+                    <p id="lastName-error" className="mt-1.5 text-sm text-error" role="alert">
+                      {errors.lastName.message}
+                    </p>
+                  )}
+                </div>
               </div>
 
               <div>
@@ -77,6 +138,7 @@ export function Register() {
                   <input
                     id="email"
                     type="email"
+                    autoComplete="email"
                     className={`input pl-10 ${errors.email ? 'input-error' : ''}`}
                     placeholder="you@example.com"
                     {...register('email')}
@@ -98,6 +160,7 @@ export function Register() {
                   <input
                     id="password"
                     type={showPassword ? 'text' : 'password'}
+                    autoComplete="new-password"
                     className={`input pl-10 pr-10 ${errors.password ? 'input-error' : ''}`}
                     placeholder="••••••••"
                     {...register('password')}
@@ -128,7 +191,8 @@ export function Register() {
                   <input
                     id="confirmPassword"
                     type={showPassword ? 'text' : 'password'}
-                    className={`input pl-10 ${errors.confirmPassword ? 'input-error' : ''}`}
+                    autoComplete="new-password"
+                    className={`input pl-10 pr-10 ${errors.confirmPassword ? 'input-error' : ''}`}
                     placeholder="••••••••"
                     {...register('confirmPassword')}
                     aria-invalid={errors.confirmPassword ? 'true' : 'false'}
@@ -160,10 +224,6 @@ export function Register() {
             </p>
           </div>
         </div>
-
-        <p className="text-center text-xs text-text-muted mt-6">
-          Demo placeholder — authentication not implemented yet
-        </p>
       </div>
     </div>
   );

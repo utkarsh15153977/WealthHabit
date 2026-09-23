@@ -1,7 +1,10 @@
 import { Link } from 'react-router-dom';
 import { LogOut, LayoutDashboard, CreditCard, Target, TrendingUp, Settings } from 'lucide-react';
+import { useAuth } from '../context/useAuth';
 
 export function Dashboard() {
+  const { user, logout } = useAuth();
+
   const navigation = [
     { name: 'Dashboard', href: '/dashboard', icon: LayoutDashboard, current: true },
     { name: 'Transactions', href: '#', icon: CreditCard, current: false },
@@ -39,8 +42,15 @@ export function Dashboard() {
             ))}
           </nav>
           <div className="flex items-center gap-4">
-            <span className="hidden sm:block text-sm text-text-muted">Demo User</span>
-            <button className="btn-ghost p-2" aria-label="Sign out">
+            <span className="hidden sm:block text-sm text-text-muted">
+              {user ? `${user.firstName} ${user.lastName}` : ''}
+            </span>
+            <button
+              type="button"
+              className="btn-ghost p-2"
+              aria-label="Sign out"
+              onClick={() => void logout()}
+            >
               <LogOut className="w-5 h-5" aria-hidden="true" />
             </button>
           </div>
@@ -50,7 +60,9 @@ export function Dashboard() {
       <main className="page-content">
         <div className="mb-8">
           <h1 className="heading-1">Dashboard</h1>
-          <p className="text-text-muted mt-1">Welcome back! Here's an overview of your financial health.</p>
+          <p className="text-text-muted mt-1">
+            Welcome back{user ? `, ${user.firstName}` : ''}! Here's an overview of your financial health.
+          </p>
         </div>
 
         <div className="card">

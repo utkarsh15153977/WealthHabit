@@ -1,7 +1,10 @@
 import { Link } from 'react-router-dom';
 import { ArrowRight, Shield, TrendingUp, Target } from 'lucide-react';
+import { useAuth } from '../context/useAuth';
 
 export function Home() {
+  const { isAuthenticated, isLoading } = useAuth();
+
   return (
     <div className="page-container">
       <header className="border-b border-border bg-surface">
@@ -14,8 +17,15 @@ export function Home() {
             <span className="text-xl font-bold text-text">WealthHabit</span>
           </div>
           <div className="flex items-center gap-4">
-            <Link to="/login" className="btn-ghost">Sign In</Link>
-            <Link to="/register" className="btn-primary">Get Started</Link>
+            {!isLoading && !isAuthenticated && (
+              <>
+                <Link to="/login" className="btn-ghost">Sign In</Link>
+                <Link to="/register" className="btn-primary">Get Started</Link>
+              </>
+            )}
+            {!isLoading && isAuthenticated && (
+              <Link to="/dashboard" className="btn-primary">Dashboard</Link>
+            )}
           </div>
         </nav>
       </header>
@@ -31,11 +41,20 @@ export function Home() {
             and watch your wealth grow — all in one place.
           </p>
           <div className="flex items-center justify-center gap-4">
-            <Link to="/register" className="btn-primary btn-lg">
-              Start Free
-              <ArrowRight className="w-4 h-4" aria-hidden="true" />
-            </Link>
-            <Link to="/login" className="btn-secondary btn-lg">Sign In</Link>
+            {!isLoading && isAuthenticated ? (
+              <Link to="/dashboard" className="btn-primary btn-lg">
+                Go to Dashboard
+                <ArrowRight className="w-4 h-4" aria-hidden="true" />
+              </Link>
+            ) : (
+              <>
+                <Link to="/register" className="btn-primary btn-lg">
+                  Start Free
+                  <ArrowRight className="w-4 h-4" aria-hidden="true" />
+                </Link>
+                <Link to="/login" className="btn-secondary btn-lg">Sign In</Link>
+              </>
+            )}
           </div>
         </section>
 
@@ -69,10 +88,17 @@ export function Home() {
         <section className="page-content py-20 text-center">
           <h2 className="heading-2 mb-4">Ready to Start?</h2>
           <p className="text-text-muted mb-8">Join thousands of users building better financial futures.</p>
-          <Link to="/register" className="btn-primary btn-lg">
-            Create Free Account
-            <ArrowRight className="w-4 h-4" aria-hidden="true" />
-          </Link>
+          {!isLoading && isAuthenticated ? (
+            <Link to="/dashboard" className="btn-primary btn-lg">
+              Go to Dashboard
+              <ArrowRight className="w-4 h-4" aria-hidden="true" />
+            </Link>
+          ) : (
+            <Link to="/register" className="btn-primary btn-lg">
+              Create Free Account
+              <ArrowRight className="w-4 h-4" aria-hidden="true" />
+            </Link>
+          )}
         </section>
       </main>
 

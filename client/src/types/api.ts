@@ -1,8 +1,14 @@
+export interface ApiErrorPayload {
+  code: string;
+  message: string;
+}
+
 export interface ApiResponse<T = unknown> {
   success: boolean;
   message?: string;
   data?: T;
   errors?: Record<string, string[]>;
+  error?: ApiErrorPayload;
 }
 
 export interface PaginatedResponse<T> {
