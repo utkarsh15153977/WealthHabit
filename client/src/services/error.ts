@@ -20,6 +20,10 @@ const CODE_MESSAGES: Record<string, string> = {
   UNAUTHORIZED: 'You need to sign in to continue',
   FORBIDDEN: 'You do not have permission to perform this action',
   INTERNAL_ERROR: 'Something went wrong. Please try again later',
+  TRANSACTION_NOT_FOUND: 'Transaction not found',
+  CATEGORY_NOT_FOUND: 'Category not found or unavailable',
+  CATEGORY_IN_USE: 'This category is used by transactions and cannot be deleted',
+  CATEGORY_ALREADY_EXISTS: 'A category with this name already exists',
 };
 
 const STATUS_MESSAGES: Record<number, string> = {

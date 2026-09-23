@@ -7,7 +7,7 @@ export function Dashboard() {
 
   const navigation = [
     { name: 'Dashboard', href: '/dashboard', icon: LayoutDashboard, current: true },
-    { name: 'Transactions', href: '#', icon: CreditCard, current: false },
+    { name: 'Transactions', href: '/transactions', icon: CreditCard, current: false },
     { name: 'Budgets', href: '#', icon: Target, current: false },
     { name: 'Analytics', href: '#', icon: TrendingUp, current: false },
     { name: 'Settings', href: '/profile', icon: Settings, current: false },

@@ -130,7 +130,7 @@ export function Profile() {
 
   const navigation = [
     { name: 'Dashboard', href: '/dashboard', icon: LayoutDashboard, current: false },
-    { name: 'Transactions', href: '/dashboard', icon: CreditCard, current: false },
+    { name: 'Transactions', href: '/transactions', icon: CreditCard, current: false },
     { name: 'Budgets', href: '/dashboard', icon: Target, current: false },
     { name: 'Analytics', href: '/dashboard', icon: TrendingUp, current: false },
     { name: 'Settings', href: '/profile', icon: Settings, current: true },
