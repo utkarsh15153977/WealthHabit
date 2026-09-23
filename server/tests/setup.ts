@@ -14,10 +14,16 @@ afterAll(async () => {
 });
 
 beforeEach(async () => {
+  await prisma.transaction.deleteMany();
+  await prisma.category.deleteMany();
   await prisma.session.deleteMany();
   await prisma.authToken.deleteMany();
   await prisma.financialProfile.deleteMany();
   await prisma.user.deleteMany();
+});
+
+afterEach(async () => {
+  // Reserved for per-test cleanup if needed
 });
 
 export function createTestUser(overrides = {}) {
