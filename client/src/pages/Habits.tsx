@@ -3,7 +3,10 @@ import { Link } from 'react-router-dom';
 import {
   CalendarCheck,
   CheckCircle2,
+  Circle,
   CreditCard,
+  Flame,
+  History,
   LayoutDashboard,
   ListChecks,
   LogOut,
@@ -27,7 +30,12 @@ import { Loading } from '../components/Loading';
 import { getApiErrorMessage } from '../services/error';
 import { habitApi } from '../services/habitApi';
 import { formatDate, toDateInputValue, todayForDateInput } from '../utils/date';
-import type { Habit, HabitFrequency, HabitWithProgress } from '../types/habit';
+import type {
+  Habit,
+  HabitFrequency,
+  HabitProgressHistoryItem,
+  HabitWithProgress,
+} from '../types/habit';
 
 const PAGE_SIZE = 10;
 const MONEY_PATTERN = /^\d+(\.\d{1,2})?$/;
@@ -124,6 +132,25 @@ function describePeriod(habit: HabitWithProgress): string {
       : 'Due this period';
 }
 
+const MONTH_SHORT = [
+  'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+  'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
+];
+const MONTH_LONG = [
+  'January', 'February', 'March', 'April', 'May', 'June',
+  'July', 'August', 'September', 'October', 'November', 'December',
+];
+
+function formatPeriodLabel(frequency: HabitFrequency, period: string): string {
+  if (frequency === 'MONTHLY') {
+    const [year, month] = period.split('-');
+    return `${MONTH_LONG[Number(month) - 1]} ${year}`;
+  }
+  const [, month, day] = period.split('-');
+  const label = `${MONTH_SHORT[Number(month) - 1]} ${Number(day)}`;
+  return frequency === 'WEEKLY' ? `Week of ${label}` : label;
+}
+
 export function Habits() {
   const { user, logout } = useAuth();
 
@@ -143,6 +170,15 @@ export function Habits() {
   const [deleteTarget, setDeleteTarget] = useState<Habit | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
   const [completingId, setCompletingId] = useState<string | null>(null);
+
+  const [historyTarget, setHistoryTarget] = useState<Habit | null>(null);
+  const [historyStatus, setHistoryStatus] = useState<
+    'idle' | 'loading' | 'error' | 'loaded'
+  >('idle');
+  const [historyItems, setHistoryItems] = useState<HabitProgressHistoryItem[]>(
+    []
+  );
+  const [historyError, setHistoryError] = useState<string | null>(null);
 
   const requestIdRef = useState(() => ({ current: 0 }))[0];
 
@@ -238,13 +274,49 @@ export function Habits() {
     [reset]
   );
 
+  const fetchHistory = useCallback(async (habit: Habit) => {
+    setHistoryStatus('loading');
+    setHistoryError(null);
+    try {
+      const result = await habitApi.getHabitProgressHistory(habit.id, {
+        page: 1,
+        pageSize: 12,
+      });
+      setHistoryItems(result.items);
+      setHistoryStatus('loaded');
+    } catch (error) {
+      setHistoryItems([]);
+      setHistoryError(getApiErrorMessage(error));
+      setHistoryStatus('error');
+    }
+  }, []);
+
+  const openHistory = useCallback(
+    (habit: Habit) => {
+      setActionError(null);
+      setSuccessMessage(null);
+      setHistoryTarget(habit);
+      void fetchHistory(habit);
+    },
+    [fetchHistory]
+  );
+
+  const closeHistory = useCallback(() => {
+    setHistoryTarget(null);
+    setHistoryItems([]);
+    setHistoryError(null);
+    setHistoryStatus('idle');
+  }, []);
+
   useEffect(() => {
-    if (!isFormOpen && !deleteTarget) return undefined;
+    if (!isFormOpen && !deleteTarget && !historyTarget) return undefined;
 
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
         if (deleteTarget) {
           setDeleteTarget(null);
+        } else if (historyTarget) {
+          closeHistory();
         } else {
           closeForm();
         }
@@ -253,7 +325,7 @@ export function Habits() {
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [isFormOpen, deleteTarget, closeForm]);
+  }, [isFormOpen, deleteTarget, historyTarget, closeForm, closeHistory]);
 
   const onSubmit = async (form: HabitForm) => {
     setActionError(null);
@@ -414,9 +486,52 @@ export function Habits() {
                     {habit.progress.completionRate}%
                   </dd>
                 </div>
+                <div className="flex justify-between gap-3">
+                  <dt className="text-text-muted">Current streak</dt>
+                  <dd
+                    className="text-text inline-flex items-center gap-1.5"
+                    data-testid={`habit-current-streak-${habit.name}`}
+                  >
+                    <Flame className="w-4 h-4 text-orange-500" aria-hidden="true" />
+                    {habit.progress.streak.current}{' '}
+                    {habit.progress.streak.current === 1 ? 'period' : 'periods'}
+                  </dd>
+                </div>
+                <div className="flex justify-between gap-3">
+                  <dt className="text-text-muted">Best streak</dt>
+                  <dd
+                    className="text-text inline-flex items-center gap-1.5"
+                    data-testid={`habit-best-streak-${habit.name}`}
+                  >
+                    {habit.progress.streak.longest}{' '}
+                    {habit.progress.streak.longest === 1 ? 'period' : 'periods'}
+                  </dd>
+                </div>
               </>
             )}
           </dl>
+
+          {habit.progress && (
+            <div className="mb-4">
+              <div className="flex items-center justify-between text-xs text-text-muted mb-1">
+                <span>Completion rate</span>
+                <span>{habit.progress.completionRate}%</span>
+              </div>
+              <div
+                className="h-2 w-full rounded-full bg-border overflow-hidden"
+                role="progressbar"
+                aria-label={`Completion rate for ${habit.name}`}
+                aria-valuemin={0}
+                aria-valuemax={100}
+                aria-valuenow={habit.progress.completionRate}
+              >
+                <div
+                  className="h-full rounded-full bg-primary"
+                  style={{ width: `${habit.progress.completionRate}%` }}
+                />
+              </div>
+            </div>
+          )}
 
           <div className="flex flex-wrap items-center justify-end gap-2 pt-3 border-t border-border">
             {habit.isActive && (
@@ -439,6 +554,15 @@ export function Habits() {
                 )}
               </button>
             )}
+            <button
+              type="button"
+              className="btn-ghost btn-sm"
+              aria-label={`History ${habit.name}`}
+              onClick={() => openHistory(habit)}
+            >
+              <History className="w-4 h-4" aria-hidden="true" />
+              History
+            </button>
             <button
               type="button"
               className="btn-ghost btn-sm"
@@ -902,6 +1026,113 @@ export function Habits() {
               >
                 {isDeleting ? 'Deleting...' : 'Delete'}
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Period history modal */}
+      {historyTarget && (
+        <div
+          className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4"
+          role="presentation"
+        >
+          <div
+            className="absolute inset-0 bg-black/40"
+            onClick={closeHistory}
+            aria-hidden="true"
+          />
+          <div
+            className="relative w-full sm:max-w-md bg-surface border border-border rounded-t-xl sm:rounded-xl shadow-lg"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="habit-history-title"
+          >
+            <div className="sticky top-0 flex items-center justify-between px-6 py-4 border-b border-border bg-surface rounded-t-xl">
+              <div className="min-w-0">
+                <h2 id="habit-history-title" className="heading-3 truncate">
+                  Habit history
+                </h2>
+                <p className="text-xs text-text-muted truncate">
+                  {historyTarget.name} · {FREQUENCY_LABELS[historyTarget.frequency]}{' '}
+                  periods
+                </p>
+              </div>
+              <button
+                type="button"
+                className="btn-ghost p-2"
+                aria-label="Close dialog"
+                onClick={closeHistory}
+              >
+                <X className="w-5 h-5" aria-hidden="true" />
+              </button>
+            </div>
+
+            <div className="p-6">
+              {historyStatus === 'loading' && (
+                <p
+                  className="text-sm text-text-muted text-center py-4"
+                  aria-live="polite"
+                >
+                  Loading history...
+                </p>
+              )}
+
+              {historyStatus === 'error' && (
+                <div
+                  className="rounded-lg border border-error bg-red-50 px-4 py-3 text-sm text-error"
+                  role="alert"
+                >
+                  <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                    <span>{historyError}</span>
+                    <button
+                      type="button"
+                      className="btn-secondary btn-sm self-start sm:self-auto"
+                      onClick={() => void fetchHistory(historyTarget)}
+                    >
+                      Retry
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {historyStatus === 'loaded' && historyItems.length === 0 && (
+                <p className="text-sm text-text-muted text-center py-4">
+                  No eligible periods yet.
+                </p>
+              )}
+
+              {historyStatus === 'loaded' && historyItems.length > 0 && (
+                <ul
+                  className="divide-y divide-border max-h-80 overflow-y-auto"
+                  data-testid="habit-history-list"
+                >
+                  {historyItems.map((item) => (
+                    <li
+                      key={item.period}
+                      className="flex items-center justify-between gap-3 py-2 text-sm"
+                    >
+                      <span className="text-text">
+                        {formatPeriodLabel(historyTarget.frequency, item.period)}
+                      </span>
+                      <span
+                        className={
+                          item.completed
+                            ? 'text-success inline-flex items-center gap-1'
+                            : 'text-text-muted inline-flex items-center gap-1'
+                        }
+                      >
+                        {item.completed ? (
+                          <CheckCircle2 className="w-4 h-4" aria-hidden="true" />
+                        ) : (
+                          <Circle className="w-4 h-4" aria-hidden="true" />
+                        )}
+                        {item.completed ? 'Completed' : 'Missed'}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              )}
             </div>
           </div>
         </div>

@@ -101,8 +101,11 @@ function makeHabit(
     updatedAt: new Date().toISOString(),
     progress: {
       habitId: id,
+      frequency: 'DAILY',
       currentPeriod: { completed, period: '2026-09-25' },
+      streak: { current: completed ? 5 : 0, longest: completed ? 8 : 0 },
       totalCompletions: completed ? 1 : 0,
+      eligiblePeriods: 1,
       completionRate: completed ? 100 : 0,
       active: true,
     },
@@ -185,6 +188,12 @@ describe('Dashboard habit summary card', () => {
     expect(screen.getByText('Completed')).toBeDefined();
     expect(screen.getByText('Review subscriptions')).toBeDefined();
     expect(screen.getByText('Pending')).toBeDefined();
+    expect(
+      screen.getByTestId('dashboard-habit-streak-Track daily expenses')
+    ).toHaveTextContent('5 streak');
+    expect(
+      screen.getByTestId('dashboard-habit-streak-Review subscriptions')
+    ).toHaveTextContent('0 streak');
     expect(mockedHabits).toHaveBeenCalledWith({
       active: true,
       includeProgress: true,

@@ -148,3 +148,24 @@ export type ListHabitsQuery = z.infer<typeof listHabitsSchema.shape.query>;
 export type ListHabitCompletionsQuery = z.infer<
   typeof listHabitCompletionsSchema.shape.query
 >;
+
+export const habitProgressHistorySchema = z.object({
+  params: z.object({
+    id: z.string().min(1, 'Habit id is required'),
+  }),
+  query: z
+    .object({
+      page: z.coerce.number().int().min(1, 'Page must be at least 1').optional(),
+      pageSize: z.coerce
+        .number()
+        .int()
+        .min(1, 'Page size must be at least 1')
+        .max(50, 'Page size must be at most 50')
+        .optional(),
+    })
+    .strict(),
+});
+
+export type HabitProgressHistoryQuery = z.infer<
+  typeof habitProgressHistorySchema.shape.query
+>;

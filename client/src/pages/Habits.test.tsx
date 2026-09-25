@@ -15,6 +15,7 @@ vi.mock('../services/habitApi', () => ({
     uncompleteHabit: vi.fn(),
     getHabitCompletions: vi.fn(),
     getHabitProgress: vi.fn(),
+    getHabitProgressHistory: vi.fn(),
   },
 }));
 
@@ -54,8 +55,11 @@ function makeHabit(overrides: Partial<HabitWithProgress> = {}): HabitWithProgres
     updatedAt: new Date().toISOString(),
     progress: {
       habitId: 'h1',
+      frequency: 'DAILY',
       currentPeriod: { completed: false, period: '2026-09-25' },
+      streak: { current: 0, longest: 0 },
       totalCompletions: 0,
+      eligiblePeriods: 0,
       completionRate: 0,
       active: true,
     },
@@ -130,8 +134,11 @@ describe('Habits page', () => {
         description: 'Log every rupee',
         progress: {
           habitId: 'h1',
+          frequency: 'DAILY',
           currentPeriod: { completed: false, period: '2026-09-25' },
+          streak: { current: 0, longest: 0 },
           totalCompletions: 4,
+          eligiblePeriods: 5,
           completionRate: 80,
           active: true,
         },
@@ -155,8 +162,11 @@ describe('Habits page', () => {
       makeHabit({
         progress: {
           habitId: 'h1',
+          frequency: 'DAILY',
           currentPeriod: { completed: true, period: '2026-09-25' },
+          streak: { current: 1, longest: 1 },
           totalCompletions: 1,
+          eligiblePeriods: 1,
           completionRate: 100,
           active: true,
         },
@@ -408,5 +418,158 @@ describe('Habits page', () => {
         expect.objectContaining({ page: 2 })
       );
     });
+  });
+
+  it('shows current and longest streaks with a completion-rate bar', async () => {
+    mockLists([
+      makeHabit({
+        progress: {
+          habitId: 'h1',
+          frequency: 'DAILY',
+          currentPeriod: { completed: false, period: '2026-09-25' },
+          streak: { current: 5, longest: 12 },
+          totalCompletions: 48,
+          eligiblePeriods: 60,
+          completionRate: 80,
+          active: true,
+        },
+      }),
+    ]);
+
+    renderPage();
+
+    expect(
+      await screen.findByTestId('habit-current-streak-Track daily expenses')
+    ).toHaveTextContent('5 periods');
+    expect(
+      screen.getByTestId('habit-best-streak-Track daily expenses')
+    ).toHaveTextContent('12 periods');
+
+    const bar = screen.getByRole('progressbar', {
+      name: 'Completion rate for Track daily expenses',
+    });
+    expect(bar).toHaveAttribute('aria-valuenow', '80');
+    expect(screen.getByText('Completion rate')).toBeDefined();
+  });
+
+  it('renders zero streaks as 0 periods', async () => {
+    mockLists([makeHabit()]);
+
+    renderPage();
+
+    expect(
+      await screen.findByTestId('habit-current-streak-Track daily expenses')
+    ).toHaveTextContent('0 periods');
+    expect(
+      screen.getByTestId('habit-best-streak-Track daily expenses')
+    ).toHaveTextContent('0 periods');
+    const bar = screen.getByRole('progressbar', {
+      name: 'Completion rate for Track daily expenses',
+    });
+    expect(bar).toHaveAttribute('aria-valuenow', '0');
+  });
+
+  it('opens the period history dialog with completed and missed periods', async () => {
+    mockLists([makeHabit()]);
+    mockedApi.getHabitProgressHistory.mockResolvedValue({
+      items: [
+        { period: '2026-09-25', completed: true },
+        { period: '2026-09-24', completed: false },
+        { period: '2026-09-23', completed: true },
+      ],
+      page: 1,
+      pageSize: 12,
+      total: 3,
+    });
+
+    renderPage();
+
+    fireEvent.click(
+      await screen.findByRole('button', { name: 'History Track daily expenses' })
+    );
+
+    const dialog = await screen.findByRole('dialog');
+    await waitFor(() => {
+      expect(mockedApi.getHabitProgressHistory).toHaveBeenCalledWith('h1', {
+        page: 1,
+        pageSize: 12,
+      });
+    });
+    expect(await within(dialog).findByText('Sep 25')).toBeDefined();
+    expect(within(dialog).getByText('Sep 24')).toBeDefined();
+    expect(within(dialog).getByText('Sep 23')).toBeDefined();
+    expect(within(dialog).getAllByText('Completed')).toHaveLength(2);
+    expect(within(dialog).getAllByText('Missed')).toHaveLength(1);
+  });
+
+  it('labels weekly history periods as week ranges', async () => {
+    const weekly = makeHabit({ id: 'h9', name: 'Weekly review', frequency: 'WEEKLY' });
+    mockLists([weekly]);
+    mockedApi.getHabitProgressHistory.mockResolvedValue({
+      items: [
+        { period: '2026-09-21', completed: true },
+        { period: '2026-09-14', completed: false },
+      ],
+      page: 1,
+      pageSize: 12,
+      total: 2,
+    });
+
+    renderPage();
+
+    fireEvent.click(await screen.findByRole('button', { name: 'History Weekly review' }));
+
+    expect(await screen.findByText('Week of Sep 21')).toBeDefined();
+    expect(screen.getByText('Week of Sep 14')).toBeDefined();
+    expect(screen.queryByText('Sep 21')).toBeNull();
+  });
+
+  it('labels monthly history periods as month names', async () => {
+    const monthly = makeHabit({ id: 'h8', name: 'Monthly budget', frequency: 'MONTHLY' });
+    mockLists([monthly]);
+    mockedApi.getHabitProgressHistory.mockResolvedValue({
+      items: [{ period: '2026-09', completed: true }],
+      page: 1,
+      pageSize: 12,
+      total: 1,
+    });
+
+    renderPage();
+
+    fireEvent.click(
+      await screen.findByRole('button', { name: 'History Monthly budget' })
+    );
+
+    expect(await screen.findByText('September 2026')).toBeDefined();
+    expect(screen.getByText('Completed')).toBeDefined();
+  });
+
+  it('surfaces history load failures with a retry', async () => {
+    mockLists([makeHabit()]);
+    mockedApi.getHabitProgressHistory.mockRejectedValueOnce(
+      new Error('History unavailable')
+    );
+
+    renderPage();
+
+    fireEvent.click(
+      await screen.findByRole('button', { name: 'History Track daily expenses' })
+    );
+
+    const dialog = await screen.findByRole('dialog');
+    const alert = await within(dialog).findByRole('alert');
+    expect(alert).toHaveTextContent('History unavailable');
+
+    mockedApi.getHabitProgressHistory.mockResolvedValue({
+      items: [],
+      page: 1,
+      pageSize: 12,
+      total: 0,
+    });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Retry' }));
+
+    expect(
+      await within(dialog).findByText('No eligible periods yet.')
+    ).toBeDefined();
   });
 });

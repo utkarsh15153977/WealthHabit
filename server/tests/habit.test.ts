@@ -134,7 +134,12 @@ describe('Habits API', () => {
     });
 
     it('rejects progress without an access token', async () => {
-      const res = await request(app).get('/api/habits/abc/progress');
+      const res = await request(app).get('/api/habits/some-id/progress');
+      expect(res.status).toBe(401);
+    });
+
+    it('rejects progress history without an access token', async () => {
+      const res = await request(app).get('/api/habits/some-id/progress/history');
       expect(res.status).toBe(401);
     });
   });
@@ -775,11 +780,14 @@ describe('Habits API', () => {
       expect(res.status).toBe(200);
       expect(res.body.data).toEqual({
         habitId: id,
+        frequency: 'DAILY',
         currentPeriod: {
           completed: false,
           period: today.toISOString().slice(0, 10),
         },
+        streak: { current: 0, longest: 0 },
         totalCompletions: 0,
+        eligiblePeriods: 1,
         completionRate: 0,
         active: true,
       });
@@ -845,6 +853,356 @@ describe('Habits API', () => {
       const res = await get(`/api/habits/${id}/progress`, tokenB);
       expect(res.status).toBe(404);
       expect(res.body.error.code).toBe('HABIT_NOT_FOUND');
+    });
+
+    it('computes current and longest streaks from consecutive completions', async () => {
+      const id = await createHabit({
+        startDate: toIsoDay(addUtcDays(today, -4)),
+      });
+      for (const offset of [3, 2, 1, 0]) {
+        await testPrisma.habitCompletion.create({
+          data: { habitId: id, completionDate: daysFromToday(-offset) },
+        });
+      }
+
+      const res = await get(`/api/habits/${id}/progress`);
+      expect(res.body.data.frequency).toBe('DAILY');
+      expect(res.body.data.streak).toEqual({ current: 4, longest: 4 });
+      expect(res.body.data.eligiblePeriods).toBe(5);
+      expect(res.body.data.completionRate).toBe(80);
+      expect(res.body.data.currentPeriod.completed).toBe(true);
+    });
+
+    it('keeps the longest streak after a gap breaks the current streak', async () => {
+      const id = await createHabit({
+        startDate: toIsoDay(addUtcDays(today, -6)),
+      });
+      // -5,-4,-3 consecutive, -2 missed, -1 and today consecutive
+      for (const offset of [5, 4, 3, 1, 0]) {
+        await testPrisma.habitCompletion.create({
+          data: { habitId: id, completionDate: daysFromToday(-offset) },
+        });
+      }
+
+      const res = await get(`/api/habits/${id}/progress`);
+      expect(res.body.data.streak).toEqual({ current: 2, longest: 3 });
+    });
+
+    it('does not reset the current streak when today is not completed yet', async () => {
+      const id = await createHabit({
+        startDate: toIsoDay(addUtcDays(today, -5)),
+      });
+      for (const offset of [2, 1]) {
+        await testPrisma.habitCompletion.create({
+          data: { habitId: id, completionDate: daysFromToday(-offset) },
+        });
+      }
+
+      const res = await get(`/api/habits/${id}/progress`);
+      expect(res.body.data.currentPeriod.completed).toBe(false);
+      expect(res.body.data.streak).toEqual({ current: 2, longest: 2 });
+      expect(res.body.data.totalCompletions).toBe(2);
+    });
+
+    it('ignores completions outside the eligible window for streaks', async () => {
+      const id = await createHabit({
+        startDate: toIsoDay(addUtcDays(today, -3)),
+      });
+      await testPrisma.habitCompletion.create({
+        data: { habitId: id, completionDate: daysFromToday(-10) },
+      });
+
+      const res = await get(`/api/habits/${id}/progress`);
+      expect(res.body.data.streak).toEqual({ current: 0, longest: 0 });
+      expect(res.body.data.totalCompletions).toBe(1);
+      expect(res.body.data.eligiblePeriods).toBe(4);
+      expect(res.body.data.completionRate).toBe(25);
+    });
+
+    it('computes weekly streaks over consecutive Monday anchors', async () => {
+      const thisWeek = habitPeriodAnchor('WEEKLY', today);
+      const id = await createHabit({
+        frequency: 'WEEKLY',
+        startDate: toIsoDay(addUtcDays(thisWeek, -21)),
+      });
+      for (const offset of [7, 14]) {
+        await testPrisma.habitCompletion.create({
+          data: { habitId: id, completionDate: addUtcDays(thisWeek, -offset) },
+        });
+      }
+      await post(`/api/habits/${id}/complete`);
+
+      const res = await get(`/api/habits/${id}/progress`);
+      expect(res.body.data.frequency).toBe('WEEKLY');
+      expect(res.body.data.streak).toEqual({ current: 3, longest: 3 });
+      expect(res.body.data.currentPeriod.completed).toBe(true);
+      expect(res.body.data.eligiblePeriods).toBe(4);
+      expect(res.body.data.completionRate).toBe(75);
+    });
+
+    it('breaks a weekly streak when an intermediate week is missed', async () => {
+      const thisWeek = habitPeriodAnchor('WEEKLY', today);
+      const id = await createHabit({
+        frequency: 'WEEKLY',
+        startDate: toIsoDay(addUtcDays(thisWeek, -21)),
+      });
+      for (const offset of [21, 14, 0]) {
+        await testPrisma.habitCompletion.create({
+          data: { habitId: id, completionDate: addUtcDays(thisWeek, -offset) },
+        });
+      }
+
+      const res = await get(`/api/habits/${id}/progress`);
+      expect(res.body.data.streak).toEqual({ current: 1, longest: 2 });
+    });
+
+    it('computes monthly streaks over consecutive month anchors', async () => {
+      const start = new Date(
+        Date.UTC(today.getUTCFullYear(), today.getUTCMonth() - 2, 1)
+      );
+      const id = await createHabit({
+        frequency: 'MONTHLY',
+        startDate: toIsoDay(start),
+      });
+      for (const back of [1, 2]) {
+        await testPrisma.habitCompletion.create({
+          data: {
+            habitId: id,
+            completionDate: new Date(
+              Date.UTC(today.getUTCFullYear(), today.getUTCMonth() - back, 1)
+            ),
+          },
+        });
+      }
+      await post(`/api/habits/${id}/complete`);
+
+      const res = await get(`/api/habits/${id}/progress`);
+      expect(res.body.data.frequency).toBe('MONTHLY');
+      expect(res.body.data.streak).toEqual({ current: 3, longest: 3 });
+      expect(res.body.data.eligiblePeriods).toBe(3);
+      expect(res.body.data.completionRate).toBe(100);
+    });
+
+    it('reports zeroed progress for a future-start habit', async () => {
+      const id = await createHabit({ startDate: toIsoDay(daysFromToday(5)) });
+
+      const res = await get(`/api/habits/${id}/progress`);
+      expect(res.body.data.streak).toEqual({ current: 0, longest: 0 });
+      expect(res.body.data.eligiblePeriods).toBe(0);
+      expect(res.body.data.completionRate).toBe(0);
+      expect(res.body.data.totalCompletions).toBe(0);
+      expect(res.body.data.currentPeriod.completed).toBe(false);
+    });
+
+    it('keeps historical streaks for an expired habit', async () => {
+      const id = await createHabit({
+        startDate: toIsoDay(addUtcDays(today, -5)),
+        endDate: toIsoDay(addUtcDays(today, -3)),
+      });
+      for (const offset of [5, 4, 3]) {
+        await testPrisma.habitCompletion.create({
+          data: { habitId: id, completionDate: daysFromToday(-offset) },
+        });
+      }
+
+      const res = await get(`/api/habits/${id}/progress`);
+      expect(res.body.data.streak).toEqual({ current: 3, longest: 3 });
+      expect(res.body.data.eligiblePeriods).toBe(3);
+      expect(res.body.data.completionRate).toBe(100);
+      expect(res.body.data.currentPeriod.completed).toBe(false);
+    });
+
+    it('preserves streak statistics after deactivation', async () => {
+      const id = await createHabit({
+        startDate: toIsoDay(addUtcDays(today, -2)),
+      });
+      await testPrisma.habitCompletion.create({
+        data: { habitId: id, completionDate: daysFromToday(-1) },
+      });
+      await post(`/api/habits/${id}/complete`);
+      await patch(`/api/habits/${id}`).send({ isActive: false });
+
+      const res = await get(`/api/habits/${id}/progress`);
+      expect(res.body.data.active).toBe(false);
+      expect(res.body.data.streak).toEqual({ current: 2, longest: 2 });
+      expect(res.body.data.totalCompletions).toBe(2);
+      expect(res.body.data.eligiblePeriods).toBe(3);
+      expect(res.body.data.completionRate).toBe(66.67);
+    });
+
+    it('reinterprets historical completions with the new frequency without rewriting rows', async () => {
+      const id = await createHabit({
+        startDate: toIsoDay(addUtcDays(today, -3)),
+      });
+      await post(`/api/habits/${id}/complete`);
+      await patch(`/api/habits/${id}`).send({ frequency: 'WEEKLY' });
+
+      const completions = await get(`/api/habits/${id}/completions`);
+      expect(completions.body.data.total).toBe(1);
+
+      const res = await get(`/api/habits/${id}/progress`);
+      expect(res.body.data.frequency).toBe('WEEKLY');
+      expect(res.body.data.streak).toEqual({ current: 1, longest: 1 });
+      expect(res.body.data.currentPeriod.completed).toBe(true);
+    });
+
+    it('includes streak fields in list progress without N+1 queries', async () => {
+      const id = await createHabit({
+        startDate: toIsoDay(addUtcDays(today, -1)),
+      });
+      await testPrisma.habitCompletion.create({
+        data: { habitId: id, completionDate: daysFromToday(-1) },
+      });
+      await post(`/api/habits/${id}/complete`);
+
+      const res = await get('/api/habits?includeProgress=true');
+      const progress = res.body.data.habits[0].progress;
+      expect(progress.frequency).toBe('DAILY');
+      expect(progress.streak).toEqual({ current: 2, longest: 2 });
+      expect(progress.eligiblePeriods).toBe(2);
+      expect(progress.completionRate).toBe(100);
+    });
+  });
+
+  describe('progress history', () => {
+    it('lists eligible periods newest first with completion flags', async () => {
+      const id = await createHabit({
+        startDate: toIsoDay(addUtcDays(today, -6)),
+      });
+      for (const offset of [6, 4]) {
+        await testPrisma.habitCompletion.create({
+          data: { habitId: id, completionDate: daysFromToday(-offset) },
+        });
+      }
+      await post(`/api/habits/${id}/complete`);
+
+      const res = await get(`/api/habits/${id}/progress/history`);
+      expect(res.status).toBe(200);
+      expect(res.body.data.total).toBe(7);
+      expect(res.body.data.page).toBe(1);
+      expect(res.body.data.pageSize).toBe(12);
+      expect(res.body.data.items).toHaveLength(7);
+      expect(res.body.data.items[0]).toEqual({
+        period: toIsoDay(today),
+        completed: true,
+      });
+      expect(res.body.data.items[1]).toEqual({
+        period: toIsoDay(addUtcDays(today, -1)),
+        completed: false,
+      });
+      expect(res.body.data.items[4]).toEqual({
+        period: toIsoDay(addUtcDays(today, -4)),
+        completed: true,
+      });
+      expect(res.body.data.items[6]).toEqual({
+        period: toIsoDay(addUtcDays(today, -6)),
+        completed: true,
+      });
+    });
+
+    it('paginates period history', async () => {
+      const id = await createHabit({
+        startDate: toIsoDay(addUtcDays(today, -30)),
+      });
+
+      const first = await get(
+        `/api/habits/${id}/progress/history?page=1&pageSize=10`
+      );
+      expect(first.body.data.total).toBe(31);
+      expect(first.body.data.items).toHaveLength(10);
+      expect(first.body.data.items[0].period).toBe(toIsoDay(today));
+
+      const last = await get(
+        `/api/habits/${id}/progress/history?page=4&pageSize=10`
+      );
+      expect(last.body.data.items).toHaveLength(1);
+      expect(last.body.data.items[0].period).toBe(
+        toIsoDay(addUtcDays(today, -30))
+      );
+    });
+
+    it('returns weekly Monday period keys', async () => {
+      const thisWeek = habitPeriodAnchor('WEEKLY', today);
+      const id = await createHabit({
+        frequency: 'WEEKLY',
+        startDate: toIsoDay(addUtcDays(thisWeek, -21)),
+      });
+
+      const res = await get(`/api/habits/${id}/progress/history`);
+      expect(res.body.data.total).toBe(4);
+      expect(res.body.data.items[0].period).toBe(toIsoDay(thisWeek));
+      expect(res.body.data.items[0].completed).toBe(false);
+    });
+
+    it('returns monthly YYYY-MM period keys', async () => {
+      const start = new Date(
+        Date.UTC(today.getUTCFullYear(), today.getUTCMonth() - 2, 1)
+      );
+      const id = await createHabit({
+        frequency: 'MONTHLY',
+        startDate: toIsoDay(start),
+      });
+      await post(`/api/habits/${id}/complete`);
+
+      const res = await get(`/api/habits/${id}/progress/history`);
+      expect(res.body.data.total).toBe(3);
+      expect(res.body.data.items[0]).toEqual({
+        period: today.toISOString().slice(0, 7),
+        completed: true,
+      });
+    });
+
+    it('returns no periods before the startDate', async () => {
+      const id = await createHabit({ startDate: toIsoDay(daysFromToday(3)) });
+
+      const res = await get(`/api/habits/${id}/progress/history`);
+      expect(res.status).toBe(200);
+      expect(res.body.data.total).toBe(0);
+      expect(res.body.data.items).toEqual([]);
+    });
+
+    it('stops period history at the endDate', async () => {
+      const id = await createHabit({
+        startDate: toIsoDay(addUtcDays(today, -5)),
+        endDate: toIsoDay(addUtcDays(today, -3)),
+      });
+
+      const res = await get(`/api/habits/${id}/progress/history`);
+      expect(res.body.data.total).toBe(3);
+      expect(res.body.data.items[0].period).toBe(
+        toIsoDay(addUtcDays(today, -3))
+      );
+      expect(
+        res.body.data.items.some(
+          (item: { period: string }) => item.period === toIsoDay(today)
+        )
+      ).toBe(false);
+    });
+
+    it('returns 404 for another user\'s progress history', async () => {
+      const id = await createHabit();
+      const res = await get(`/api/habits/${id}/progress/history`, tokenB);
+      expect(res.status).toBe(404);
+      expect(res.body.error.code).toBe('HABIT_NOT_FOUND');
+    });
+
+    it('rejects page=0', async () => {
+      const id = await createHabit();
+      const res = await get(`/api/habits/${id}/progress/history?page=0`);
+      expect(res.status).toBe(400);
+      expect(res.body.error.code).toBe('VALIDATION_ERROR');
+    });
+
+    it('rejects pageSize above 50', async () => {
+      const id = await createHabit();
+      const res = await get(`/api/habits/${id}/progress/history?pageSize=51`);
+      expect(res.status).toBe(400);
+    });
+
+    it('rejects unknown query parameters', async () => {
+      const id = await createHabit();
+      const res = await get(`/api/habits/${id}/progress/history?from=2026-01-01`);
+      expect(res.status).toBe(400);
     });
   });
 

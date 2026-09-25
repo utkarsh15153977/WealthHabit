@@ -26,6 +26,7 @@ import {
   PiggyBank,
   Percent,
   ReceiptText,
+  Flame,
 } from 'lucide-react';
 import { useAuth } from '../context/useAuth';
 import { NotificationBell } from '../components/NotificationBell';
@@ -1062,16 +1063,28 @@ export function Dashboard() {
                         className="flex items-center justify-between gap-3 text-sm"
                       >
                         <span className="text-text truncate">{habit.name}</span>
-                        <span
-                          className={
-                            habit.progress?.currentPeriod.completed
-                              ? 'text-success whitespace-nowrap'
-                              : 'text-text-muted whitespace-nowrap'
-                          }
-                        >
-                          {habit.progress?.currentPeriod.completed
-                            ? 'Completed'
-                            : 'Pending'}
+                        <span className="flex items-center gap-3 whitespace-nowrap">
+                          <span
+                            className="inline-flex items-center gap-1 text-text-muted"
+                            data-testid={`dashboard-habit-streak-${habit.name}`}
+                          >
+                            <Flame
+                              className="w-3.5 h-3.5 text-orange-500"
+                              aria-hidden="true"
+                            />
+                            {habit.progress?.streak.current ?? 0} streak
+                          </span>
+                          <span
+                            className={
+                              habit.progress?.currentPeriod.completed
+                                ? 'text-success'
+                                : 'text-text-muted'
+                            }
+                          >
+                            {habit.progress?.currentPeriod.completed
+                              ? 'Completed'
+                              : 'Pending'}
+                          </span>
                         </span>
                       </li>
                     ))}

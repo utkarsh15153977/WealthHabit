@@ -117,8 +117,8 @@ advances due dates or statuses.
 Habits are **informational only**: creating, completing, uncompleting or
 deleting a habit never creates or mutates transactions, budgets, bills,
 subscriptions, savings goals or recurring rules, and never touches balances
-or aggregates. There is no scheduler, cron job, queue, streak calculation, or
-push/email channel.
+or aggregates. There is no scheduler, cron job, queue, or push/email
+channel.
 
 - **Models**: `financial_habits` (`FinancialHabit`: name, description,
   `frequency`, optional `target Decimal(15,2)` + `unit`, `startDate`,
@@ -141,8 +141,9 @@ push/email channel.
 - **Endpoints** (all authenticated; `userId` always from the JWT):
   - `GET /api/habits` — strict query (`page`, `pageSize` ≤ 50, `active`,
     `frequency`, `includeProgress`); sorted active-first then `createdAt`
-    desc; `includeProgress` computes progress for the page with grouped
-    aggregates (no per-habit queries)
+    desc; `includeProgress` computes progress for the page from a **single**
+    completion query (`habitId` + `completionDate` only, ordered ASC) and
+    derives every habit's progress in memory (no per-habit queries, no N+1)
   - `POST /api/habits`, `GET/PATCH/DELETE /api/habits/:id`
   - `POST /api/habits/:id/complete` — server derives the current UTC
     occurrence (clients never send a date). First completion → **201**;
@@ -154,11 +155,46 @@ push/email channel.
     (idempotent, `{ removed: boolean }`); allowed even when paused.
   - `GET /api/habits/:id/completions` — paginated history (`pageSize` ≤ 50),
     newest first.
-  - `GET /api/habits/:id/progress` — `{ habitId, currentPeriod:
-    { completed, period }, totalCompletions, completionRate, active }`.
+  - `GET /api/habits/:id/progress` — `{ habitId, frequency, currentPeriod:
+    { completed, period }, streak: { current, longest }, totalCompletions,
+    eligiblePeriods, completionRate, active }`.
+  - `GET /api/habits/:id/progress/history` — paginated period history
+    (`page`, `pageSize` ≤ 50, default 12) newest first; one item per
+    **eligible** period (`{ period, completed }`), so daily habits return
+    days, weekly habits Monday keys, monthly habits `YYYY-MM` keys. No
+    artificial/future periods are ever synthesized; foreign ids → `404`.
 - **completionRate** = distinct completed periods ÷ eligible periods × 100,
   where eligible periods run from `startDate` through
-  `min(endDate, today)` counted arithmetically (UTC), capped at 100%.
+  `min(endDate, today)` counted arithmetically (UTC), Decimal-rounded to 2
+  places, capped at 100%, never negative (Phase 4A definition unchanged).
+- **Habit Streak Architecture (derived data)**:
+  - `HabitCompletion` is the **only source of truth**. Streaks are computed
+    on demand by the pure utility `server/src/utils/habitStreak.ts` (no
+    database access) and **never persisted** — there is no `currentStreak`
+    or `longestStreak` column, no streak table, and completing a habit does
+    not update any counter. No synchronization problem can occur.
+  - Normalization: raw completion dates are re-anchored to the habit's
+    current frequency periods (`DAILY` → UTC day, `WEEKLY` → **Monday of
+    the ISO-8601 week**, `MONTHLY` → 1st of month), deduplicated
+    defensively, sorted ascending, then counted with period-aware
+    `previousHabitPeriod`/`isConsecutiveHabitPeriod` helpers — never raw
+    millisecond arithmetic, never local timezones.
+  - **current streak** = consecutive completed periods ending at the most
+    recent completed period. A not-yet-completed current period does **not**
+    reset it to 0 (Sep 23 ✓, Sep 24 ✓, Sep 25 ✗ today → current streak 2);
+    an earlier gap does break it (Sep 23 ✗ → the later run starts fresh).
+  - **longest streak** = the longest run of consecutive completed periods
+    anywhere in the history (O(n) after the defensive sort).
+  - Only completions inside the eligible window count: nothing before
+    `startDate`, nothing after `endDate`, nothing outside
+    `min(endDate, today)`. A **future-start** habit reports 0/0/0. An
+    **expired** habit keeps its historical streaks (no future periods are
+    added after `endDate`). A **deactivated** habit keeps its historical
+    statistics — Phase 4A semantics preserved (deactivation only blocks new
+    completions; it does not restate the eligible window or history).
+  - A **frequency change** reinterprets historical anchors under the new
+    frequency for streak purposes; the stored rows themselves are never
+    rewritten (no migration logic).
 - **Semantics**: historical completions are never rewritten when the
   frequency changes (the stored anchor stays; a later completion for the
   same calendar day may create a second row under the new frequency if the
@@ -171,7 +207,11 @@ push/email channel.
 - **Frontend**: `/habits` page (create/edit modal, active & paused sections,
   per-period complete button, pause/resume, delete confirmation, pagination),
   a nav item on every page, and a Dashboard summary card
-  (`{completed} of {total}` for the current period).
+  (`{completed} of {total}` for the current period). Each habit card shows
+  the current streak (Flame icon), best streak, a compact completion-rate
+  progress bar, and opens a period-history dialog (frequency-aware labels:
+  `Sep 25`, `Week of Sep 21`, `September 2026`) fed by the history endpoint.
+  The Dashboard habit rows show `{n} streak` for up to 4 habits.
 
 ## Design Principles
 

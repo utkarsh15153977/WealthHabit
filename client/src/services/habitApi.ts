@@ -8,6 +8,8 @@ import type {
   HabitListParams,
   HabitListResponse,
   HabitProgress,
+  HabitProgressHistoryParams,
+  HabitProgressHistoryResponse,
   HabitResponse,
   UncompleteHabitResponse,
   UpdateHabitPayload,
@@ -90,6 +92,23 @@ export async function getHabitProgress(id: string): Promise<HabitProgress> {
   return unwrapData(response.data);
 }
 
+export async function getHabitProgressHistory(
+  id: string,
+  params: HabitProgressHistoryParams = {}
+): Promise<HabitProgressHistoryResponse> {
+  const query: Record<string, string> = {};
+  if (params.page !== undefined) query.page = String(params.page);
+  if (params.pageSize !== undefined) query.pageSize = String(params.pageSize);
+
+  const response = await api.get<ApiResponse<HabitProgressHistoryResponse>>(
+    `/habits/${id}/progress/history`,
+    {
+      params: Object.keys(query).length > 0 ? query : undefined,
+    }
+  );
+  return unwrapData(response.data);
+}
+
 export const habitApi = {
   getHabits,
   createHabit,
@@ -99,4 +118,5 @@ export const habitApi = {
   uncompleteHabit,
   getHabitCompletions,
   getHabitProgress,
+  getHabitProgressHistory,
 };

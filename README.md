@@ -240,13 +240,17 @@ Implemented:
 - ✅ Recurring transactions with on-demand occurrence generation
 - ✅ Bills & Subscriptions with due-state tracking and renewal advancement
 - ✅ Dashboard summary with budgets, recurring rules, upcoming obligations and
-  a financial-habits summary card
+  a financial-habits summary card (completed this period + per-habit streaks)
 - ✅ **Financial habits** — CRUD + activation, idempotent completion
-  (`POST/DELETE /api/habits/:id/complete`), completion history and progress
-  (`completionRate` over elapsed periods). Completions are informational only:
-  they never create or mutate transactions, budgets, bills, subscriptions or
-  recurring rules, and there is no scheduler or streak calculation. Weekly
-  periods anchor to Monday (ISO-8601 UTC weeks), monthly to the 1st.
+  (`POST/DELETE /api/habits/:id/complete`), completion history, progress and
+  **streaks** (`current`/`longest` + `completionRate` over elapsed periods,
+  derived on demand from `HabitCompletion` — no streak columns, tables or
+  counters are persisted). A period-history endpoint
+  (`GET /api/habits/:id/progress/history`) backs the in-page history dialog.
+  Completions are informational only: they never create or mutate
+  transactions, budgets, bills, subscriptions or recurring rules, and there
+  is no scheduler. Weekly periods anchor to Monday (ISO-8601 UTC weeks),
+  monthly to the 1st.
 - ✅ **In-app notifications** — budget thresholds (80%/100%), bill reminders
   (≤3 days) and overdue alerts, subscription renewal reminders (≤3 days),
   recurring transaction due reminders (≤1 day), and daily habit reminders
@@ -255,6 +259,6 @@ Implemented:
   (`POST /api/notifications/generate`), deduplicated per user, and never
   create or modify financial records. No scheduler, queue, email, or push
   channel is involved.
-- ✅ Server test suite (450 tests) + client unit tests (30 tests)
+- ✅ Server test suite (501 tests) + client unit tests (36 tests)
 
-Next milestone: **Phase 4 planning**
+Next milestone: **Phase 5 planning** (Phases 1, 2, 3A–3C, 4A and 4B delivered)

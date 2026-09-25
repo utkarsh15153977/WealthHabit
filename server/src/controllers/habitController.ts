@@ -14,6 +14,7 @@ import {
 } from '../types/habit.js';
 import {
   CreateHabitInput,
+  HabitProgressHistoryQuery,
   ListHabitCompletionsQuery,
   ListHabitsQuery,
   UpdateHabitInput,
@@ -24,6 +25,7 @@ import {
   deleteHabit,
   findUserHabit,
   getHabitProgress,
+  getHabitProgressHistory,
   listHabitCompletions,
   listUserHabits,
   toCompletionData,
@@ -223,4 +225,17 @@ export async function getHabitProgressHandler(
 
   const progress = await getHabitProgress(habit);
   res.json({ success: true, data: progress });
+}
+
+export async function getHabitProgressHistoryHandler(
+  req: AuthenticatedRequest,
+  res: Response
+): Promise<void> {
+  const userId = getAuthenticatedUserId(req);
+  const { id } = req.params as { id: string };
+  const habit = await requireHabit(id, userId);
+
+  const query = (req.query ?? {}) as HabitProgressHistoryQuery;
+  const result = await getHabitProgressHistory(habit, query);
+  res.json({ success: true, data: result });
 }

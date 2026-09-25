@@ -19,12 +19,37 @@ export interface HabitCurrentPeriod {
   period: string;
 }
 
+export interface HabitStreak {
+  current: number;
+  longest: number;
+}
+
 export interface HabitProgress {
   habitId: string;
+  frequency: HabitFrequency;
   currentPeriod: HabitCurrentPeriod;
+  streak: HabitStreak;
   totalCompletions: number;
+  eligiblePeriods: number;
   completionRate: number;
   active: boolean;
+}
+
+export interface HabitProgressHistoryItem {
+  period: string;
+  completed: boolean;
+}
+
+export interface HabitProgressHistoryParams {
+  page?: number;
+  pageSize?: number;
+}
+
+export interface HabitProgressHistoryResponse {
+  items: HabitProgressHistoryItem[];
+  page: number;
+  pageSize: number;
+  total: number;
 }
 
 export interface HabitWithProgress extends Habit {

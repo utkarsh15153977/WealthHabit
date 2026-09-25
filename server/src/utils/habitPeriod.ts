@@ -75,6 +75,30 @@ export function isHabitActiveOn(
 }
 
 /**
+ * Inclusive anchor bounds of the eligible occurrence window:
+ * [anchor(startDate), anchor(min(endDate, today))], or null when the
+ * window is empty (e.g. a habit whose startDate is in the future).
+ * Single source of truth shared by the count, streak and history logic.
+ */
+export function eligiblePeriodBounds(
+  frequency: Frequency | string,
+  startDate: Date,
+  endDate: Date | null,
+  today: Date
+): { from: Date; to: Date } | null {
+  const from = habitPeriodAnchor(frequency, startDate);
+  const todayDay = startOfUtcDay(today);
+  const lastDay =
+    endDate !== null && startOfUtcDay(endDate) < todayDay ? endDate : today;
+  const to = habitPeriodAnchor(frequency, lastDay);
+
+  if (to.getTime() < from.getTime()) {
+    return null;
+  }
+  return { from, to };
+}
+
+/**
  * Number of eligible occurrence periods between `startDate` and
  * min(`endDate`, `today`) inclusive, in UTC calendar terms. Computed
  * arithmetically (no per-period iteration).
@@ -85,15 +109,11 @@ export function eligiblePeriodCount(
   endDate: Date | null,
   today: Date
 ): number {
-  const from = habitPeriodAnchor(frequency, startDate);
-  const todayDay = startOfUtcDay(today);
-  const lastDay =
-    endDate !== null && startOfUtcDay(endDate) < todayDay ? endDate : today;
-  const to = habitPeriodAnchor(frequency, lastDay);
-
-  if (to.getTime() < from.getTime()) {
+  const bounds = eligiblePeriodBounds(frequency, startDate, endDate, today);
+  if (bounds === null) {
     return 0;
   }
+  const { from, to } = bounds;
 
   switch (frequency) {
     case 'WEEKLY':
@@ -110,4 +130,67 @@ export function eligiblePeriodCount(
     default:
       return Math.floor((to.getTime() - from.getTime()) / MS_PER_DAY) + 1;
   }
+}
+
+/**
+ * UTC anchor of the occurrence immediately before `anchor`.
+ * All arithmetic is UTC calendar math (no local timezone involvement).
+ */
+export function previousHabitPeriod(
+  anchor: Date,
+  frequency: Frequency | string
+): Date {
+  const current = habitPeriodAnchor(frequency, anchor);
+
+  switch (frequency) {
+    case 'WEEKLY':
+      return addUtcDays(current, -7);
+    case 'MONTHLY':
+      return new Date(
+        Date.UTC(current.getUTCFullYear(), current.getUTCMonth() - 1, 1)
+      );
+    case 'YEARLY':
+      return new Date(Date.UTC(current.getUTCFullYear() - 1, 0, 1));
+    case 'DAILY':
+    default:
+      return addUtcDays(current, -1);
+  }
+}
+
+/**
+ * UTC anchor of the occurrence immediately after `anchor`.
+ */
+export function nextHabitPeriod(
+  anchor: Date,
+  frequency: Frequency | string
+): Date {
+  const current = habitPeriodAnchor(frequency, anchor);
+
+  switch (frequency) {
+    case 'WEEKLY':
+      return addUtcDays(current, 7);
+    case 'MONTHLY':
+      return new Date(
+        Date.UTC(current.getUTCFullYear(), current.getUTCMonth() + 1, 1)
+      );
+    case 'YEARLY':
+      return new Date(Date.UTC(current.getUTCFullYear() + 1, 0, 1));
+    case 'DAILY':
+    default:
+      return addUtcDays(current, 1);
+  }
+}
+
+/**
+ * True when `previous` is the occurrence immediately before `current`
+ * under the habit's period semantics (UTC).
+ */
+export function isConsecutiveHabitPeriod(
+  previous: Date,
+  current: Date,
+  frequency: Frequency | string
+): boolean {
+  const expected = previousHabitPeriod(current, frequency);
+  const actual = habitPeriodAnchor(frequency, previous);
+  return expected.getTime() === actual.getTime();
 }

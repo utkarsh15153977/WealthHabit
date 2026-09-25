@@ -5,6 +5,7 @@ import { asyncHandler } from '../middleware/asyncHandler.js';
 import {
   createHabitSchema,
   habitIdParamSchema,
+  habitProgressHistorySchema,
   listHabitCompletionsSchema,
   listHabitsSchema,
   updateHabitSchema,
@@ -15,6 +16,7 @@ import {
   deleteHabitHandler,
   getHabitHandler,
   getHabitProgressHandler,
+  getHabitProgressHistoryHandler,
   listCompletionsHandler,
   listHabitsHandler,
   uncompleteHabitHandler,
@@ -69,6 +71,11 @@ router.get(
   '/:id/progress',
   validate(habitIdParamSchema),
   asyncHandler(getHabitProgressHandler)
+);
+router.get(
+  '/:id/progress/history',
+  validate(habitProgressHistorySchema),
+  asyncHandler(getHabitProgressHistoryHandler)
 );
 
 export default router;

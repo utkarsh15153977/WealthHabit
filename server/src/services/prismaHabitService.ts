@@ -1,6 +1,7 @@
 import { FinancialHabit, HabitCompletion, Prisma } from '@prisma/client';
 import {
   CreateHabitInput,
+  HabitProgressHistoryQuery,
   ListHabitCompletionsQuery,
   ListHabitsQuery,
   UpdateHabitInput,
@@ -8,16 +9,17 @@ import {
 import { prisma } from '../config/prisma.js';
 import { startOfUtcDay } from '../utils/date.js';
 import { Prisma as PrismaNamespace } from '@prisma/client';
-import { roundRate } from '../utils/money.js';
 import {
-  eligiblePeriodCount,
-  habitPeriodAnchor,
+  eligiblePeriodBounds,
   habitPeriodKey,
+  nextHabitPeriod,
 } from '../utils/habitPeriod.js';
+import { calculateHabitProgress } from '../utils/habitStreak.js';
 import {
   HabitCompletionData,
   HabitData,
   HabitProgressData,
+  HabitProgressHistoryItemData,
 } from '../types/habit.js';
 
 export function toHabitData(habit: FinancialHabit): HabitData {
@@ -48,23 +50,54 @@ export function toCompletionData(
   };
 }
 
-function completionRate(
-  frequency: FinancialHabit['frequency'],
-  startDate: Date,
-  endDate: Date | null,
-  totalCompletions: number,
+/**
+ * Derives the full progress payload (streaks, rate, current period) from
+ * one habit's completion anchors. Pure computation — no extra queries.
+ */
+function buildProgressData(
+  habit: FinancialHabit,
+  completionAnchors: Date[],
   today: Date
-): number {
-  const eligible = eligiblePeriodCount(frequency, startDate, endDate, today);
-  if (eligible <= 0) {
-    return 0;
-  }
-  const completed = Math.min(totalCompletions, eligible);
-  return roundRate(
-    new PrismaNamespace.Decimal(completed)
-      .dividedBy(eligible)
-      .mul(100)
+): HabitProgressData {
+  const stats = calculateHabitProgress({
+    frequency: habit.frequency,
+    startDate: habit.startDate,
+    endDate: habit.endDate,
+    today,
+    completionAnchors,
+  });
+
+  const currentKey = habitPeriodKey(habit.frequency, today);
+  const completedKeys = new Set(
+    completionAnchors.map((anchor) => habitPeriodKey(habit.frequency, anchor))
   );
+
+  return {
+    habitId: habit.id,
+    frequency: habit.frequency as HabitProgressData['frequency'],
+    currentPeriod: {
+      completed: completedKeys.has(currentKey),
+      period: currentKey,
+    },
+    streak: {
+      current: stats.currentStreak,
+      longest: stats.longestStreak,
+    },
+    totalCompletions: stats.totalCompletions,
+    eligiblePeriods: stats.eligiblePeriods,
+    completionRate: stats.completionRate,
+    active: habit.isActive,
+  };
+}
+
+async function loadCompletionAnchors(
+  where: Prisma.HabitCompletionWhereInput
+): Promise<{ habitId?: string; completionDate: Date }[]> {
+  return prisma.habitCompletion.findMany({
+    where,
+    select: { habitId: true, completionDate: true },
+    orderBy: { completionDate: 'asc' },
+  });
 }
 
 export async function createHabit(
@@ -129,9 +162,10 @@ export async function listUserHabits(
 }
 
 /**
- * Batch progress for a page of habits: two aggregate queries total
- * (completion counts grouped by habit + current-period completions),
- * so the list endpoint never issues one query per habit.
+ * Batch progress for a page of habits: a single completion query for the
+ * whole page (habitId + completionDate only, ordered ASC), so the list
+ * endpoint never issues one query per habit (no N+1) and streaks are
+ * derived in memory from that one result set.
  */
 async function computeProgressForHabits(
   habits: FinancialHabit[]
@@ -144,55 +178,25 @@ async function computeProgressForHabits(
   const today = startOfUtcDay(new Date());
   const habitIds = habits.map((habit) => habit.id);
 
-  const [completionCounts, currentCompletions] = await prisma.$transaction([
-    prisma.habitCompletion.groupBy({
-      by: ['habitId'],
-      where: { habitId: { in: habitIds } },
-      orderBy: { habitId: 'asc' },
-      _count: { _all: true },
-    }),
-    prisma.habitCompletion.findMany({
-      where: {
-        OR: habits.map((habit) => ({
-          habitId: habit.id,
-          completionDate: habitPeriodAnchor(habit.frequency, today),
-        })),
-      },
-      select: { habitId: true },
-    }),
-  ]);
+  const rows = await loadCompletionAnchors({
+    habitId: { in: habitIds },
+  });
 
-  const countByHabit = new Map<string, number>();
-  for (const entry of completionCounts) {
-    const count =
-      typeof entry._count === 'object' &&
-      typeof entry._count._all === 'number'
-        ? entry._count._all
-        : 0;
-    countByHabit.set(entry.habitId, count);
+  const anchorsByHabit = new Map<string, Date[]>();
+  for (const row of rows) {
+    const existing = anchorsByHabit.get(row.habitId!);
+    if (existing) {
+      existing.push(row.completionDate);
+    } else {
+      anchorsByHabit.set(row.habitId!, [row.completionDate]);
+    }
   }
-  const completedHabits = new Set(
-    currentCompletions.map((completion) => completion.habitId)
-  );
 
   for (const habit of habits) {
-    const total = countByHabit.get(habit.id) ?? 0;
-    progress.set(habit.id, {
-      habitId: habit.id,
-      currentPeriod: {
-        completed: completedHabits.has(habit.id),
-        period: habitPeriodKey(habit.frequency, today),
-      },
-      totalCompletions: total,
-      completionRate: completionRate(
-        habit.frequency,
-        habit.startDate,
-        habit.endDate,
-        total,
-        today
-      ),
-      active: habit.isActive,
-    });
+    progress.set(
+      habit.id,
+      buildProgressData(habit, anchorsByHabit.get(habit.id) ?? [], today)
+    );
   }
 
   return progress;
@@ -310,32 +314,62 @@ export async function getHabitProgress(
   habit: FinancialHabit
 ): Promise<HabitProgressData> {
   const today = startOfUtcDay(new Date());
-  const anchor = habitPeriodAnchor(habit.frequency, today);
+  const rows = await loadCompletionAnchors({ habitId: habit.id });
+  return buildProgressData(
+    habit,
+    rows.map((row) => row.completionDate),
+    today
+  );
+}
 
-  const [totalCompletions, current] = await prisma.$transaction([
-    prisma.habitCompletion.count({ where: { habitId: habit.id } }),
-    prisma.habitCompletion.findUnique({
-      where: {
-        habitId_completionDate: { habitId: habit.id, completionDate: anchor },
-      },
-      select: { habitId: true },
-    }),
-  ]);
+export interface HabitProgressHistoryResult {
+  items: HabitProgressHistoryItemData[];
+  page: number;
+  pageSize: number;
+  total: number;
+}
 
-  return {
-    habitId: habit.id,
-    currentPeriod: {
-      completed: current !== null,
-      period: habitPeriodKey(habit.frequency, today),
-    },
-    totalCompletions,
-    completionRate: completionRate(
-      habit.frequency,
-      habit.startDate,
-      habit.endDate,
-      totalCompletions,
-      today
-    ),
-    active: habit.isActive,
-  };
+/**
+ * Period-based historical progress: one item per ELIGIBLE occurrence
+ * period (daily = day, weekly = Monday, monthly = 1st), newest first.
+ * Future periods and periods outside [startDate, endDate] are never
+ * synthesized — only the arithmetic eligible window is listed.
+ */
+export async function getHabitProgressHistory(
+  habit: FinancialHabit,
+  query?: HabitProgressHistoryQuery
+): Promise<HabitProgressHistoryResult> {
+  const page = query?.page ?? 1;
+  const pageSize = query?.pageSize ?? 12;
+  const today = startOfUtcDay(new Date());
+
+  const rows = await loadCompletionAnchors({ habitId: habit.id });
+  const completedKeys = new Set(
+    rows.map((row) => habitPeriodKey(habit.frequency, row.completionDate))
+  );
+
+  const bounds = eligiblePeriodBounds(
+    habit.frequency,
+    habit.startDate,
+    habit.endDate,
+    today
+  );
+  const periods: string[] = [];
+  if (bounds !== null) {
+    let cursor = bounds.from;
+    while (cursor.getTime() <= bounds.to.getTime()) {
+      periods.push(habitPeriodKey(habit.frequency, cursor));
+      cursor = nextHabitPeriod(cursor, habit.frequency);
+    }
+    periods.reverse();
+  }
+
+  const total = periods.length;
+  const start = (page - 1) * pageSize;
+  const items = periods.slice(start, start + pageSize).map((period) => ({
+    period,
+    completed: completedKeys.has(period),
+  }));
+
+  return { items, page, pageSize, total };
 }
