@@ -16,6 +16,10 @@ const Budgets = lazy(() => import('../pages/Budgets').then((m) => ({ default: m.
 const RecurringTransactions = lazy(() =>
   import('../pages/RecurringTransactions').then((m) => ({ default: m.RecurringTransactions }))
 );
+const Bills = lazy(() => import('../pages/Bills').then((m) => ({ default: m.Bills })));
+const Subscriptions = lazy(() =>
+  import('../pages/Subscriptions').then((m) => ({ default: m.Subscriptions }))
+);
 
 export const routes: RouteObject[] = [
   {
@@ -78,6 +82,22 @@ export const routes: RouteObject[] = [
       </ProtectedRoute>
     ),
   },
+  {
+    path: '/bills',
+    element: (
+      <ProtectedRoute>
+        {createElement(WithSuspense(Bills))}
+      </ProtectedRoute>
+    ),
+  },
+  {
+    path: '/subscriptions',
+    element: (
+      <ProtectedRoute>
+        {createElement(WithSuspense(Subscriptions))}
+      </ProtectedRoute>
+    ),
+  },
 ];
 
 export const publicRoutes = ['/', '/login', '/register'];
@@ -87,4 +107,6 @@ export const protectedRoutes = [
   '/transactions',
   '/budgets',
   '/recurring-transactions',
+  '/bills',
+  '/subscriptions',
 ];

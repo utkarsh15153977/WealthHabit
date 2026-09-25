@@ -14,7 +14,6 @@ import {
   TrendingUp,
   Trash2,
   X,
-  Zap,
 } from 'lucide-react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
@@ -24,28 +23,22 @@ import { Loading } from '../components/Loading';
 import { getApiErrorMessage } from '../services/error';
 import { getMyProfile } from '../services/userApi';
 import { getCategories } from '../services/categoryApi';
-import { recurringTransactionApi } from '../services/recurringTransactionApi';
+import { subscriptionApi } from '../services/subscriptionApi';
 import { formatDate, toDateInputValue, todayForDateInput } from '../utils/date';
 import type { Category } from '../types/category';
-import type {
-  RecurringFrequency,
-  RecurringTransaction,
-} from '../types/recurringTransaction';
+import type { Subscription, SubscriptionStatus } from '../types/subscription';
 
 const MONEY_PATTERN = /^\d+(\.\d{1,2})?$/;
 const MONEY_MAX = 9999999999999.99;
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 
-const recurringSchema = z
+const subscriptionSchema = z
   .object({
     name: z
       .string()
       .trim()
       .min(1, 'Name is required')
       .max(100, 'Name must be at most 100 characters'),
-    type: z.enum(['INCOME', 'EXPENSE'], {
-      errorMap: () => ({ message: 'Type must be INCOME or EXPENSE' }),
-    }),
     amount: z
       .string()
       .trim()
@@ -53,30 +46,40 @@ const recurringSchema = z
       .regex(MONEY_PATTERN, 'Amount must be a positive number with up to 2 decimal places')
       .refine((value) => Number(value) > 0, 'Amount must be greater than zero')
       .refine((value) => Number(value) <= MONEY_MAX, 'Amount exceeds the maximum allowed value'),
-    categoryId: z.string().min(1, 'Category is required'),
-    frequency: z.enum(['DAILY', 'WEEKLY', 'MONTHLY', 'YEARLY'], {
-      errorMap: () => ({ message: 'Frequency must be DAILY, WEEKLY, MONTHLY or YEARLY' }),
+    categoryId: z.string(),
+    billingCycle: z.enum(['DAILY', 'WEEKLY', 'MONTHLY', 'YEARLY'], {
+      errorMap: () => ({ message: 'Billing cycle must be DAILY, WEEKLY, MONTHLY or YEARLY' }),
     }),
-    startDate: z
+    nextRenewalDate: z
       .string()
-      .refine((value) => DATE_PATTERN.test(value), 'Start date is required'),
-    endDate: z
-      .string()
-      .refine((value) => value === '' || DATE_PATTERN.test(value), 'Invalid end date'),
+      .refine((value) => DATE_PATTERN.test(value), 'Next renewal date is required'),
+    status: z.enum(['ACTIVE', 'PAUSED', 'CANCELLED', 'EXPIRED'], {
+      errorMap: () => ({ message: 'Status must be ACTIVE, PAUSED, CANCELLED or EXPIRED' }),
+    }),
   })
-  .strict()
-  .refine((data) => !data.endDate || data.endDate >= data.startDate, {
-    path: ['endDate'],
-    message: 'End date must be on or after start date',
-  });
+  .strict();
 
-type RecurringForm = z.infer<typeof recurringSchema>;
+type SubscriptionForm = z.infer<typeof subscriptionSchema>;
 
-const FREQUENCY_LABELS: Record<RecurringFrequency, string> = {
+const CYCLE_LABELS: Record<Subscription['billingCycle'], string> = {
   DAILY: 'Daily',
   WEEKLY: 'Weekly',
   MONTHLY: 'Monthly',
   YEARLY: 'Yearly',
+};
+
+const STATUS_LABELS: Record<SubscriptionStatus, string> = {
+  ACTIVE: 'Active',
+  PAUSED: 'Paused',
+  CANCELLED: 'Cancelled',
+  EXPIRED: 'Expired',
+};
+
+const STATUS_BADGES: Record<SubscriptionStatus, string> = {
+  ACTIVE: 'badge badge-success',
+  PAUSED: 'badge badge-warning',
+  CANCELLED: 'badge badge-info',
+  EXPIRED: 'badge badge-error',
 };
 
 function createCurrencyFormatter(currency: string | null): (amount: number) => string {
@@ -95,34 +98,32 @@ function createCurrencyFormatter(currency: string | null): (amount: number) => s
   };
 }
 
-function emptyFormValues(): RecurringForm {
+function emptyFormValues(): SubscriptionForm {
   return {
     name: '',
-    type: 'EXPENSE',
     amount: '',
     categoryId: '',
-    frequency: 'MONTHLY',
-    startDate: todayForDateInput(),
-    endDate: '',
+    billingCycle: 'MONTHLY',
+    nextRenewalDate: todayForDateInput(),
+    status: 'ACTIVE',
   };
 }
 
-function toFormValues(rule: RecurringTransaction): RecurringForm {
+function toFormValues(subscription: Subscription): SubscriptionForm {
   return {
-    name: rule.name,
-    type: rule.type,
-    amount: String(rule.amount),
-    categoryId: rule.categoryId,
-    frequency: rule.frequency,
-    startDate: toDateInputValue(rule.startDate),
-    endDate: rule.endDate ? toDateInputValue(rule.endDate) : '',
+    name: subscription.name,
+    amount: String(subscription.amount),
+    categoryId: subscription.categoryId ?? '',
+    billingCycle: subscription.billingCycle,
+    nextRenewalDate: toDateInputValue(subscription.nextRenewalDate),
+    status: subscription.status,
   };
 }
 
-export function RecurringTransactions() {
+export function Subscriptions() {
   const { user, logout } = useAuth();
 
-  const [rules, setRules] = useState<RecurringTransaction[]>([]);
+  const [subscriptions, setSubscriptions] = useState<Subscription[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [hasLoadedOnce, setHasLoadedOnce] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -134,39 +135,38 @@ export function RecurringTransactions() {
   const [isLoadingCategories, setIsLoadingCategories] = useState(true);
   const [currency, setCurrency] = useState<string | null>(null);
 
+  const [statusFilter, setStatusFilter] = useState<SubscriptionStatus | ''>('');
+  const [monthFilter, setMonthFilter] = useState('');
+
   const [isFormOpen, setIsFormOpen] = useState(false);
-  const [editingRule, setEditingRule] = useState<RecurringTransaction | null>(null);
-  const [deleteTarget, setDeleteTarget] = useState<RecurringTransaction | null>(null);
+  const [editingSubscription, setEditingSubscription] = useState<Subscription | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<Subscription | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
 
   const {
     register,
     handleSubmit,
     reset,
-    watch,
-    setValue,
     formState: { errors, isSubmitting },
-  } = useForm<RecurringForm>({
-    resolver: zodResolver(recurringSchema),
+  } = useForm<SubscriptionForm>({
+    resolver: zodResolver(subscriptionSchema),
     defaultValues: emptyFormValues(),
   });
-
-  const watchedType = watch('type');
 
   const navigation = [
     { name: 'Dashboard', href: '/dashboard', icon: LayoutDashboard, current: false },
     { name: 'Transactions', href: '/transactions', icon: CreditCard, current: false },
     { name: 'Budgets', href: '/budgets', icon: Target, current: false },
-    { name: 'Recurring', href: '/recurring-transactions', icon: Repeat, current: true },
+    { name: 'Recurring', href: '/recurring-transactions', icon: Repeat, current: false },
     { name: 'Bills', href: '/bills', icon: Receipt, current: false },
-    { name: 'Subscriptions', href: '/subscriptions', icon: RefreshCw, current: false },
+    { name: 'Subscriptions', href: '/subscriptions', icon: RefreshCw, current: true },
     { name: 'Analytics', href: '#', icon: TrendingUp, current: false },
     { name: 'Settings', href: '/profile', icon: Settings, current: false },
   ];
 
-  const typeCategories = useMemo(
-    () => categories.filter((category) => category.type === watchedType),
-    [categories, watchedType]
+  const expenseCategories = useMemo(
+    () => categories.filter((category) => category.type === 'EXPENSE'),
+    [categories]
   );
 
   const fetchProfileCurrency = useCallback(async () => {
@@ -190,7 +190,7 @@ export function RecurringTransactions() {
     }
   }, []);
 
-  const fetchRules = useCallback(
+  const fetchSubscriptions = useCallback(
     async (options: { initial?: boolean } = {}) => {
       const { initial = false } = options;
 
@@ -202,8 +202,11 @@ export function RecurringTransactions() {
       setLoadError(null);
 
       try {
-        const result = await recurringTransactionApi.getRecurringTransactions();
-        setRules(result.recurringTransactions);
+        const result = await subscriptionApi.getSubscriptions({
+          status: statusFilter ? statusFilter : undefined,
+          month: monthFilter || undefined,
+        });
+        setSubscriptions(result.subscriptions);
         setHasLoadedOnce(true);
       } catch (error) {
         if (initial || hasLoadedOnce) {
@@ -217,7 +220,7 @@ export function RecurringTransactions() {
         }
       }
     },
-    [hasLoadedOnce]
+    [hasLoadedOnce, statusFilter, monthFilter]
   );
 
   useEffect(() => {
@@ -226,18 +229,18 @@ export function RecurringTransactions() {
   }, [fetchProfileCurrency, fetchCategories]);
 
   useEffect(() => {
-    void fetchRules({ initial: !hasLoadedOnce });
-  }, [fetchRules, hasLoadedOnce]);
+    void fetchSubscriptions({ initial: !hasLoadedOnce });
+  }, [fetchSubscriptions, hasLoadedOnce]);
 
   const closeForm = useCallback(() => {
     setIsFormOpen(false);
-    setEditingRule(null);
+    setEditingSubscription(null);
     setActionError(null);
     reset(emptyFormValues());
   }, [reset]);
 
   const openCreateForm = useCallback(() => {
-    setEditingRule(null);
+    setEditingSubscription(null);
     setActionError(null);
     setSuccessMessage(null);
     reset(emptyFormValues());
@@ -245,11 +248,11 @@ export function RecurringTransactions() {
   }, [reset]);
 
   const openEditForm = useCallback(
-    (rule: RecurringTransaction) => {
-      setEditingRule(rule);
+    (subscription: Subscription) => {
+      setEditingSubscription(subscription);
       setActionError(null);
       setSuccessMessage(null);
-      reset(toFormValues(rule));
+      reset(toFormValues(subscription));
       setIsFormOpen(true);
     },
     [reset]
@@ -272,69 +275,47 @@ export function RecurringTransactions() {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [isFormOpen, deleteTarget, closeForm]);
 
-  const onSubmit = async (data: RecurringForm) => {
+  const onSubmit = async (data: SubscriptionForm) => {
     setActionError(null);
     setSuccessMessage(null);
 
     const payload = {
       name: data.name.trim(),
-      categoryId: data.categoryId,
-      type: data.type,
+      categoryId: data.categoryId ? data.categoryId : null,
       amount: data.amount.trim(),
-      frequency: data.frequency,
-      startDate: data.startDate,
-      ...(data.endDate ? { endDate: data.endDate } : {}),
+      billingCycle: data.billingCycle,
+      nextRenewalDate: data.nextRenewalDate,
+      status: data.status,
     };
 
     try {
-      if (editingRule) {
-        await recurringTransactionApi.updateRecurringTransaction(editingRule.id, payload);
-        setSuccessMessage('Recurring transaction updated successfully');
+      if (editingSubscription) {
+        await subscriptionApi.updateSubscription(editingSubscription.id, payload);
+        setSuccessMessage('Subscription updated successfully');
       } else {
-        await recurringTransactionApi.createRecurringTransaction(payload);
-        setSuccessMessage('Recurring transaction created successfully');
+        await subscriptionApi.createSubscription(payload);
+        setSuccessMessage('Subscription created successfully');
       }
 
       closeForm();
-      await fetchRules();
+      await fetchSubscriptions();
     } catch (error) {
       setActionError(getApiErrorMessage(error));
     }
   };
 
-  const toggleActive = async (rule: RecurringTransaction) => {
+  const renewNow = async (subscription: Subscription) => {
     setActionError(null);
     setSuccessMessage(null);
 
     try {
-      await recurringTransactionApi.updateRecurringTransaction(rule.id, {
-        isActive: !rule.isActive,
-      });
+      const result = await subscriptionApi.renewSubscription(subscription.id);
       setSuccessMessage(
-        rule.isActive
-          ? `"${rule.name}" deactivated`
-          : `"${rule.name}" activated`
+        `"${subscription.name}" renewed — next renewal is ${formatDate(
+          result.subscription.nextRenewalDate
+        )}`
       );
-      await fetchRules();
-    } catch (error) {
-      setActionError(getApiErrorMessage(error));
-    }
-  };
-
-  const generateNow = async (rule: RecurringTransaction) => {
-    setActionError(null);
-    setSuccessMessage(null);
-
-    try {
-      const result = await recurringTransactionApi.generateOccurrences(rule.id);
-      setSuccessMessage(
-        result.occurrencesCreated > 0
-          ? `Created ${result.occurrencesCreated} occurrence${
-              result.occurrencesCreated === 1 ? '' : 's'
-            } for "${rule.name}"`
-          : `No occurrences due for "${rule.name}" yet`
-      );
-      await fetchRules();
+      await fetchSubscriptions();
     } catch (error) {
       setActionError(getApiErrorMessage(error));
     }
@@ -347,10 +328,10 @@ export function RecurringTransactions() {
     setActionError(null);
 
     try {
-      await recurringTransactionApi.deleteRecurringTransaction(deleteTarget.id);
+      await subscriptionApi.deleteSubscription(deleteTarget.id);
       setDeleteTarget(null);
-      setSuccessMessage('Recurring transaction deleted successfully');
-      await fetchRules();
+      setSuccessMessage('Subscription deleted successfully');
+      await fetchSubscriptions();
     } catch (error) {
       setActionError(getApiErrorMessage(error));
     } finally {
@@ -364,7 +345,19 @@ export function RecurringTransactions() {
     return <Loading />;
   }
 
-  const showEmpty = !isLoading && !loadError && rules.length === 0 && hasLoadedOnce;
+  const showEmpty =
+    !isLoading &&
+    !loadError &&
+    subscriptions.length === 0 &&
+    hasLoadedOnce &&
+    !statusFilter &&
+    !monthFilter;
+  const showNoMatches =
+    !isLoading &&
+    !loadError &&
+    subscriptions.length === 0 &&
+    hasLoadedOnce &&
+    (Boolean(statusFilter) || Boolean(monthFilter));
 
   return (
     <div className="page-container">
@@ -419,14 +412,15 @@ export function RecurringTransactions() {
       <main className="page-content">
         <div className="mb-8 flex flex-col sm:flex-row sm:items-end sm:justify-between gap-4">
           <div>
-            <h1 className="heading-1">Recurring Transactions</h1>
+            <h1 className="heading-1">Subscriptions</h1>
             <p className="text-text-muted mt-1">
-              Automate regular income and expenses. Occurrences become normal transactions.
+              Keep an eye on recurring services. Renewing a subscription only moves the renewal
+              date — it never creates a transaction.
             </p>
           </div>
           <button type="button" className="btn-primary" onClick={openCreateForm}>
             <Plus className="w-4 h-4" aria-hidden="true" />
-            Create Recurring
+            Add Subscription
           </button>
         </div>
 
@@ -458,7 +452,7 @@ export function RecurringTransactions() {
               <button
                 type="button"
                 className="btn-secondary btn-sm self-start sm:self-auto"
-                onClick={() => void fetchRules({ initial: true })}
+                onClick={() => void fetchSubscriptions({ initial: true })}
               >
                 Retry
               </button>
@@ -466,79 +460,124 @@ export function RecurringTransactions() {
           </div>
         )}
 
+        <div className="mb-6 flex flex-col sm:flex-row sm:items-end gap-4">
+          <div>
+            <label htmlFor="subs-status-filter" className="label">
+              Status
+            </label>
+            <select
+              id="subs-status-filter"
+              className="input sm:w-44"
+              value={statusFilter}
+              onChange={(event) => setStatusFilter(event.target.value as SubscriptionStatus | '')}
+            >
+              <option value="">All statuses</option>
+              <option value="ACTIVE">Active</option>
+              <option value="PAUSED">Paused</option>
+              <option value="CANCELLED">Cancelled</option>
+              <option value="EXPIRED">Expired</option>
+            </select>
+          </div>
+          <div>
+            <label htmlFor="subs-month-filter" className="label">
+              Renewal month
+            </label>
+            <input
+              id="subs-month-filter"
+              type="month"
+              className="input sm:w-44"
+              value={monthFilter}
+              onChange={(event) => setMonthFilter(event.target.value)}
+            />
+          </div>
+          {(statusFilter || monthFilter) && (
+            <button
+              type="button"
+              className="btn-ghost"
+              onClick={() => {
+                setStatusFilter('');
+                setMonthFilter('');
+              }}
+            >
+              Clear filters
+            </button>
+          )}
+        </div>
+
         {showEmpty && (
           <div className="card">
             <div className="card-body text-center py-16">
               <div className="w-16 h-16 mx-auto mb-6 rounded-full bg-primary-light flex items-center justify-center">
-                <Repeat className="w-8 h-8 text-primary" aria-hidden="true" />
+                <RefreshCw className="w-8 h-8 text-primary" aria-hidden="true" />
               </div>
-              <h2 className="heading-2 mb-3">No recurring transactions</h2>
+              <h2 className="heading-2 mb-3">No subscriptions yet</h2>
               <p className="text-text-muted mb-8 max-w-md mx-auto">
-                Create a rule for regular income or expenses like salary or subscriptions, and
-                generate occurrences whenever they are due.
+                Track streaming, software or gym memberships so renewal dates and monthly costs
+                never surprise you.
               </p>
               <button type="button" className="btn-primary" onClick={openCreateForm}>
                 <Plus className="w-4 h-4" aria-hidden="true" />
-                Create Recurring
+                Add Subscription
               </button>
             </div>
           </div>
         )}
 
-        {!loadError && rules.length > 0 && (
+        {showNoMatches && (
+          <div className="card">
+            <div className="card-body text-center py-12">
+              <h2 className="heading-3 mb-2">No subscriptions match your filters</h2>
+              <p className="text-text-muted">Try a different status or month.</p>
+            </div>
+          </div>
+        )}
+
+        {!loadError && subscriptions.length > 0 && (
           <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-            {rules.map((rule) => (
-              <div key={rule.id} className="card">
+            {subscriptions.map((subscription) => (
+              <div key={subscription.id} className="card">
                 <div className="card-body">
                   <div className="flex items-start justify-between gap-3 mb-3">
                     <div className="min-w-0">
-                      <h2 className="heading-4 truncate">{rule.name}</h2>
+                      <h2 className="heading-4 truncate">{subscription.name}</h2>
                       <p className="text-xs text-text-muted mt-0.5">
-                        {rule.category.name} · {FREQUENCY_LABELS[rule.frequency]}
+                        {subscription.category ? subscription.category.name : 'Uncategorized'} ·{' '}
+                        {CYCLE_LABELS[subscription.billingCycle]}
                       </p>
                     </div>
-                    <span
-                      className={
-                        rule.isActive ? 'badge badge-success' : 'badge badge-warning'
-                      }
-                    >
-                      {rule.isActive ? 'Active' : 'Inactive'}
+                    <span className={STATUS_BADGES[subscription.status]}>
+                      {STATUS_LABELS[subscription.status]}
                     </span>
                   </div>
 
                   <div className="flex items-center justify-between gap-3 mb-3">
-                    <span
-                      className={`text-lg font-semibold ${
-                        rule.type === 'INCOME' ? 'text-primary' : 'text-error'
-                      }`}
-                    >
-                      {formatAmount(rule.amount)}
+                    <span className="text-lg font-semibold text-error">
+                      {formatAmount(subscription.amount)}
                     </span>
-                    <span
-                      className={
-                        rule.type === 'INCOME' ? 'badge badge-success' : 'badge badge-warning'
-                      }
-                    >
-                      {rule.type === 'INCOME' ? 'Income' : 'Expense'}
+                    <span className="flex items-center gap-2">
+                      {subscription.dueState === 'DUE' && (
+                        <span className="badge badge-warning">Renews today</span>
+                      )}
+                      {subscription.dueState === 'OVERDUE' && (
+                        <span className="badge badge-error">Overdue</span>
+                      )}
                     </span>
                   </div>
 
                   <dl className="text-sm space-y-1.5 mb-4">
                     <div className="flex justify-between gap-3">
-                      <dt className="text-text-muted">Next occurrence</dt>
+                      <dt className="text-text-muted">Next renewal</dt>
                       <dd className="text-text font-medium">
-                        {formatDate(rule.nextOccurrenceDate)}
+                        {formatDate(subscription.nextRenewalDate)}
                       </dd>
                     </div>
                     <div className="flex justify-between gap-3">
-                      <dt className="text-text-muted">Starts</dt>
-                      <dd className="text-text">{formatDate(rule.startDate)}</dd>
+                      <dt className="text-text-muted">Billing cycle</dt>
+                      <dd className="text-text">{CYCLE_LABELS[subscription.billingCycle]}</dd>
                     </div>
                     <div className="flex justify-between gap-3">
-                      <dt className="text-text-muted">Ends</dt>
-                      <dd className="text-text">
-                        {rule.endDate ? formatDate(rule.endDate) : 'Ongoing'}
-                      </dd>
+                      <dt className="text-text-muted">Member since</dt>
+                      <dd className="text-text">{formatDate(subscription.createdAt)}</dd>
                     </div>
                   </dl>
 
@@ -546,31 +585,23 @@ export function RecurringTransactions() {
                     <button
                       type="button"
                       className="btn-ghost btn-sm"
-                      aria-label={`Generate due occurrences for ${rule.name}`}
-                      onClick={() => void generateNow(rule)}
-                      disabled={!rule.isActive}
+                      aria-label={`Renew ${subscription.name}`}
+                      onClick={() => void renewNow(subscription)}
+                      disabled={subscription.status !== 'ACTIVE'}
                       title={
-                        rule.isActive
-                          ? 'Generate due occurrences'
-                          : 'Activate the rule to generate occurrences'
+                        subscription.status === 'ACTIVE'
+                          ? 'Renew now — moves the renewal date forward'
+                          : 'Only active subscriptions can be renewed'
                       }
                     >
-                      <Zap className="w-4 h-4" aria-hidden="true" />
-                      Generate
+                      <RefreshCw className="w-4 h-4" aria-hidden="true" />
+                      Renew
                     </button>
                     <button
                       type="button"
                       className="btn-ghost btn-sm"
-                      onClick={() => void toggleActive(rule)}
-                      aria-label={`${rule.isActive ? 'Deactivate' : 'Activate'} ${rule.name}`}
-                    >
-                      {rule.isActive ? 'Deactivate' : 'Activate'}
-                    </button>
-                    <button
-                      type="button"
-                      className="btn-ghost btn-sm"
-                      aria-label={`Edit ${rule.name}`}
-                      onClick={() => openEditForm(rule)}
+                      aria-label={`Edit ${subscription.name}`}
+                      onClick={() => openEditForm(subscription)}
                     >
                       <Pencil className="w-4 h-4" aria-hidden="true" />
                       Edit
@@ -578,8 +609,8 @@ export function RecurringTransactions() {
                     <button
                       type="button"
                       className="btn-ghost btn-sm text-error hover:bg-red-50"
-                      aria-label={`Delete ${rule.name}`}
-                      onClick={() => setDeleteTarget(rule)}
+                      aria-label={`Delete ${subscription.name}`}
+                      onClick={() => setDeleteTarget(subscription)}
                     >
                       <Trash2 className="w-4 h-4" aria-hidden="true" />
                       Delete
@@ -591,7 +622,7 @@ export function RecurringTransactions() {
           </div>
         )}
 
-        {isFetching && rules.length > 0 && (
+        {isFetching && subscriptions.length > 0 && (
           <p className="text-xs text-text-muted text-center mt-4" aria-live="polite">
             Refreshing...
           </p>
@@ -609,11 +640,11 @@ export function RecurringTransactions() {
             className="relative w-full sm:max-w-lg max-h-[95vh] sm:max-h-[90vh] overflow-y-auto bg-surface border border-border rounded-t-xl sm:rounded-xl shadow-lg"
             role="dialog"
             aria-modal="true"
-            aria-labelledby="recurring-form-title"
+            aria-labelledby="subscription-form-title"
           >
             <div className="sticky top-0 flex items-center justify-between px-6 py-4 border-b border-border bg-surface rounded-t-xl">
-              <h2 id="recurring-form-title" className="heading-3">
-                {editingRule ? 'Edit Recurring Transaction' : 'Create Recurring Transaction'}
+              <h2 id="subscription-form-title" className="heading-3">
+                {editingSubscription ? 'Edit Subscription' : 'Add Subscription'}
               </h2>
               <button
                 type="button"
@@ -637,20 +668,24 @@ export function RecurringTransactions() {
                 )}
 
                 <div>
-                  <label htmlFor="recurring-name" className="label">
+                  <label htmlFor="subscription-name" className="label">
                     Name
                   </label>
                   <input
-                    id="recurring-name"
+                    id="subscription-name"
                     type="text"
-                    placeholder="e.g. Salary, Gym membership"
+                    placeholder="e.g. Netflix, Gym, Cloud storage"
                     className={`input ${errors.name ? 'input-error' : ''}`}
                     {...register('name')}
                     aria-invalid={errors.name ? 'true' : 'false'}
-                    aria-describedby={errors.name ? 'recurring-name-error' : undefined}
+                    aria-describedby={errors.name ? 'subscription-name-error' : undefined}
                   />
                   {errors.name && (
-                    <p id="recurring-name-error" className="mt-1.5 text-sm text-error" role="alert">
+                    <p
+                      id="subscription-name-error"
+                      className="mt-1.5 text-sm text-error"
+                      role="alert"
+                    >
                       {errors.name.message}
                     </p>
                   )}
@@ -658,43 +693,24 @@ export function RecurringTransactions() {
 
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <div>
-                    <label htmlFor="recurring-type" className="label">
-                      Type
-                    </label>
-                    <select
-                      id="recurring-type"
-                      className={`input ${errors.type ? 'input-error' : ''}`}
-                      {...register('type', {
-                        onChange: () => setValue('categoryId', ''),
-                      })}
-                    >
-                      <option value="EXPENSE">Expense</option>
-                      <option value="INCOME">Income</option>
-                    </select>
-                    {errors.type && (
-                      <p className="mt-1.5 text-sm text-error" role="alert">
-                        {errors.type.message}
-                      </p>
-                    )}
-                  </div>
-
-                  <div>
-                    <label htmlFor="recurring-amount" className="label">
+                    <label htmlFor="subscription-amount" className="label">
                       Amount
                     </label>
                     <input
-                      id="recurring-amount"
+                      id="subscription-amount"
                       type="text"
                       inputMode="decimal"
                       placeholder="0.00"
                       className={`input ${errors.amount ? 'input-error' : ''}`}
                       {...register('amount')}
                       aria-invalid={errors.amount ? 'true' : 'false'}
-                      aria-describedby={errors.amount ? 'recurring-amount-error' : undefined}
+                      aria-describedby={
+                        errors.amount ? 'subscription-amount-error' : undefined
+                      }
                     />
                     {errors.amount && (
                       <p
-                        id="recurring-amount-error"
+                        id="subscription-amount-error"
                         className="mt-1.5 text-sm text-error"
                         role="alert"
                       >
@@ -702,45 +718,21 @@ export function RecurringTransactions() {
                       </p>
                     )}
                   </div>
-                </div>
-
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  <div>
-                    <label htmlFor="recurring-frequency" className="label">
-                      Frequency
-                    </label>
-                    <select
-                      id="recurring-frequency"
-                      className={`input ${errors.frequency ? 'input-error' : ''}`}
-                      {...register('frequency')}
-                    >
-                      <option value="DAILY">Daily</option>
-                      <option value="WEEKLY">Weekly</option>
-                      <option value="MONTHLY">Monthly</option>
-                      <option value="YEARLY">Yearly</option>
-                    </select>
-                    {errors.frequency && (
-                      <p className="mt-1.5 text-sm text-error" role="alert">
-                        {errors.frequency.message}
-                      </p>
-                    )}
-                  </div>
 
                   <div>
-                    <label htmlFor="recurring-categoryId" className="label">
-                      Category
+                    <label htmlFor="subscription-categoryId" className="label">
+                      Category <span className="text-text-muted">(optional)</span>
                     </label>
                     <select
-                      id="recurring-categoryId"
+                      id="subscription-categoryId"
                       className={`input ${errors.categoryId ? 'input-error' : ''}`}
                       {...register('categoryId')}
                       disabled={isLoadingCategories}
-                      aria-invalid={errors.categoryId ? 'true' : 'false'}
                     >
                       <option value="">
-                        {isLoadingCategories ? 'Loading categories...' : 'Select a category'}
+                        {isLoadingCategories ? 'Loading categories...' : 'No category'}
                       </option>
-                      {typeCategories.map((category) => (
+                      {expenseCategories.map((category) => (
                         <option key={category.id} value={category.id}>
                           {category.name}
                           {category.isDefault ? ' (default)' : ''}
@@ -752,54 +744,74 @@ export function RecurringTransactions() {
                         {errors.categoryId.message}
                       </p>
                     )}
-                    {!isLoadingCategories && typeCategories.length === 0 && (
-                      <p className="mt-1.5 text-sm text-text-muted">
-                        No {watchedType.toLowerCase()} categories available.
-                      </p>
-                    )}
                   </div>
                 </div>
 
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <div>
-                    <label htmlFor="recurring-startDate" className="label">
-                      Start date
+                    <label htmlFor="subscription-billingCycle" className="label">
+                      Billing cycle
                     </label>
-                    <input
-                      id="recurring-startDate"
-                      type="date"
-                      className={`input ${errors.startDate ? 'input-error' : ''}`}
-                      {...register('startDate')}
-                      aria-invalid={errors.startDate ? 'true' : 'false'}
-                    />
-                    {errors.startDate && (
+                    <select
+                      id="subscription-billingCycle"
+                      className={`input ${errors.billingCycle ? 'input-error' : ''}`}
+                      {...register('billingCycle')}
+                    >
+                      <option value="DAILY">Daily</option>
+                      <option value="WEEKLY">Weekly</option>
+                      <option value="MONTHLY">Monthly</option>
+                      <option value="YEARLY">Yearly</option>
+                    </select>
+                    {errors.billingCycle && (
                       <p className="mt-1.5 text-sm text-error" role="alert">
-                        {errors.startDate.message}
+                        {errors.billingCycle.message}
                       </p>
                     )}
                   </div>
 
                   <div>
-                    <label htmlFor="recurring-endDate" className="label">
-                      End date <span className="text-text-muted">(optional)</span>
+                    <label htmlFor="subscription-nextRenewalDate" className="label">
+                      Next renewal
                     </label>
                     <input
-                      id="recurring-endDate"
+                      id="subscription-nextRenewalDate"
                       type="date"
-                      className={`input ${errors.endDate ? 'input-error' : ''}`}
-                      {...register('endDate')}
-                      aria-invalid={errors.endDate ? 'true' : 'false'}
+                      className={`input ${errors.nextRenewalDate ? 'input-error' : ''}`}
+                      {...register('nextRenewalDate')}
+                      aria-invalid={errors.nextRenewalDate ? 'true' : 'false'}
                     />
-                    {errors.endDate && (
+                    {errors.nextRenewalDate && (
                       <p className="mt-1.5 text-sm text-error" role="alert">
-                        {errors.endDate.message}
+                        {errors.nextRenewalDate.message}
                       </p>
                     )}
                   </div>
                 </div>
 
+                <div>
+                  <label htmlFor="subscription-status" className="label">
+                    Status
+                  </label>
+                  <select
+                    id="subscription-status"
+                    className={`input ${errors.status ? 'input-error' : ''}`}
+                    {...register('status')}
+                  >
+                    <option value="ACTIVE">Active</option>
+                    <option value="PAUSED">Paused</option>
+                    <option value="CANCELLED">Cancelled</option>
+                    <option value="EXPIRED">Expired</option>
+                  </select>
+                  {errors.status && (
+                    <p className="mt-1.5 text-sm text-error" role="alert">
+                      {errors.status.message}
+                    </p>
+                  )}
+                </div>
+
                 <p className="text-xs text-text-muted">
-                  Occurrences are generated on demand and created as normal transactions.
+                  Renewing rolls the renewal date forward on the billing cycle. No transaction is
+                  created automatically.
                 </p>
 
                 <div className="flex flex-col-reverse sm:flex-row sm:justify-end gap-3 pt-2">
@@ -808,12 +820,12 @@ export function RecurringTransactions() {
                   </button>
                   <button type="submit" className="btn-primary" disabled={isSubmitting}>
                     {isSubmitting
-                      ? editingRule
+                      ? editingSubscription
                         ? 'Saving...'
-                        : 'Creating...'
-                      : editingRule
+                        : 'Adding...'
+                      : editingSubscription
                         ? 'Save Changes'
-                        : 'Create Recurring'}
+                        : 'Add Subscription'}
                   </button>
                 </div>
               </form>
@@ -837,21 +849,21 @@ export function RecurringTransactions() {
             className="relative w-full sm:max-w-md bg-surface border border-border rounded-t-xl sm:rounded-xl shadow-lg p-6"
             role="alertdialog"
             aria-modal="true"
-            aria-labelledby="delete-recurring-title"
-            aria-describedby="delete-recurring-description"
+            aria-labelledby="delete-subscription-title"
+            aria-describedby="delete-subscription-description"
           >
             <div className="flex items-center gap-3 mb-4">
               <div className="w-10 h-10 rounded-full bg-red-50 flex items-center justify-center flex-shrink-0">
                 <Trash2 className="w-5 h-5 text-error" aria-hidden="true" />
               </div>
-              <h2 id="delete-recurring-title" className="heading-3">
-                Delete recurring transaction?
+              <h2 id="delete-subscription-title" className="heading-3">
+                Delete subscription?
               </h2>
             </div>
-            <p id="delete-recurring-description" className="text-sm text-text-muted mb-6">
+            <p id="delete-subscription-description" className="text-sm text-text-muted mb-6">
               This will permanently delete{' '}
-              <span className="font-medium text-text">{deleteTarget.name}</span>. Transactions that
-              were already generated are kept. This action cannot be undone.
+              <span className="font-medium text-text">{deleteTarget.name}</span>. Transactions are
+              not affected. This action cannot be undone.
             </p>
             {actionError && (
               <div

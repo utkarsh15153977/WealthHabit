@@ -1,23 +1,12 @@
 import { z } from 'zod';
 import { Frequency } from '@prisma/client';
-import { amountSchema, transactionTypeValues } from './transactionSchemas.js';
-import { startOfUtcDay } from '../utils/date.js';
+import {
+  amountSchema,
+  dayDateSchema,
+  transactionTypeValues,
+} from './transactionSchemas.js';
 
 const frequencyValues = Object.values(Frequency) as [Frequency, ...Frequency[]];
-
-const dayDateSchema = z
-  .union([z.string(), z.date()])
-  .transform((value, ctx) => {
-    const date = value instanceof Date ? value : new Date(value);
-    if (Number.isNaN(date.getTime())) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        message: 'Invalid date',
-      });
-      return z.NEVER;
-    }
-    return startOfUtcDay(date);
-  });
 
 const recurringFields = {
   name: z

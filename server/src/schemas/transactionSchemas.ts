@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { TransactionType } from '@prisma/client';
+import { startOfUtcDay } from '../utils/date.js';
 
 export const transactionTypeValues = Object.values(TransactionType) as [
   TransactionType,
@@ -54,6 +55,20 @@ const dateSchema = z
       return z.NEVER;
     }
     return date;
+  });
+
+export const dayDateSchema = z
+  .union([z.string(), z.date()])
+  .transform((value, ctx) => {
+    const date = value instanceof Date ? value : new Date(value);
+    if (Number.isNaN(date.getTime())) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'Invalid date',
+      });
+      return z.NEVER;
+    }
+    return startOfUtcDay(date);
   });
 
 export const createTransactionSchema = z.object({

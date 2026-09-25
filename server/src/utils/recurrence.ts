@@ -1,5 +1,7 @@
 import { Frequency } from '@prisma/client';
-import { addUtcDays } from './date.js';
+import { addUtcDays, startOfUtcDay } from './date.js';
+
+const MS_PER_DAY = 24 * 60 * 60 * 1000;
 
 function daysInUtcMonth(year: number, monthIndex: number): number {
   return new Date(Date.UTC(year, monthIndex + 1, 0)).getUTCDate();
@@ -74,4 +76,69 @@ export function collectDueOccurrences(
   }
 
   return dates;
+}
+
+function clampToMonths(anchor: Date, months: number): Date {
+  const totalMonths = anchor.getUTCMonth() + months;
+  const year = anchor.getUTCFullYear() + Math.floor(totalMonths / 12);
+  const month = ((totalMonths % 12) + 12) % 12;
+  const day = Math.min(anchor.getUTCDate(), daysInUtcMonth(year, month));
+  return new Date(Date.UTC(year, month, day));
+}
+
+function clampToYears(anchor: Date, years: number): Date {
+  const year = anchor.getUTCFullYear() + years;
+  const month = anchor.getUTCMonth();
+  const day = Math.min(anchor.getUTCDate(), daysInUtcMonth(year, month));
+  return new Date(Date.UTC(year, month, day));
+}
+
+/**
+ * Returns the next obligation date strictly after `current` on the schedule
+ * anchored at `anchor` (e.g. a bill's original due date, a subscription's
+ * creation day). Clamping (Jan 31 → Feb 28) never drifts the anchor: the next
+ * step re-derives from `anchor`, so Feb 28 → Mar 31. This advances the
+ * obligation only; it never creates transactions.
+ */
+export function advanceObligation(
+  anchor: Date,
+  current: Date,
+  frequency: Frequency
+): Date {
+  const a = startOfUtcDay(anchor);
+  const c = startOfUtcDay(current);
+
+  if (c.getTime() < a.getTime()) {
+    return a;
+  }
+
+  const diffDays = Math.floor((c.getTime() - a.getTime()) / MS_PER_DAY);
+
+  switch (frequency) {
+    case 'DAILY':
+      return addUtcDays(a, diffDays + 1);
+    case 'WEEKLY':
+      return addUtcDays(a, (Math.floor(diffDays / 7) + 1) * 7);
+    case 'MONTHLY': {
+      const monthDiff =
+        (c.getUTCFullYear() - a.getUTCFullYear()) * 12 + (c.getUTCMonth() - a.getUTCMonth());
+      let candidate = clampToMonths(a, monthDiff);
+      if (candidate.getTime() <= c.getTime()) {
+        candidate = clampToMonths(a, monthDiff + 1);
+      }
+      return candidate;
+    }
+    case 'YEARLY': {
+      const yearDiff = c.getUTCFullYear() - a.getUTCFullYear();
+      let candidate = clampToYears(a, yearDiff);
+      if (candidate.getTime() <= c.getTime()) {
+        candidate = clampToYears(a, yearDiff + 1);
+      }
+      return candidate;
+    }
+    default: {
+      const exhaustive: never = frequency;
+      throw new Error(`Unsupported frequency: ${String(exhaustive)}`);
+    }
+  }
 }

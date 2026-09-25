@@ -15,6 +15,8 @@ import {
   LayoutDashboard,
   CreditCard,
     Target,
+    Receipt,
+    RefreshCw,
     Repeat,
     TrendingUp,
   Settings,
@@ -30,10 +32,14 @@ import { getApiErrorMessage } from '../services/error';
 import { getDashboardSummary } from '../services/dashboardApi';
 import { budgetApi } from '../services/budgetApi';
 import { recurringTransactionApi } from '../services/recurringTransactionApi';
+import { billApi } from '../services/billApi';
+import { subscriptionApi } from '../services/subscriptionApi';
 import { formatDate, formatMonth } from '../utils/date';
 import type { DashboardSummaryData } from '../types/dashboard';
 import type { BudgetWithProgress } from '../types/budget';
 import type { RecurringTransaction } from '../types/recurringTransaction';
+import type { Bill } from '../types/bill';
+import type { Subscription } from '../types/subscription';
 
 function currentUtcMonth(): string {
   const now = new Date();
@@ -96,10 +102,18 @@ export function Dashboard() {
   const [recurringRules, setRecurringRules] = useState<RecurringTransaction[]>([]);
   const [recurringLoading, setRecurringLoading] = useState(true);
   const [recurringError, setRecurringError] = useState<string | null>(null);
+  const [bills, setBills] = useState<Bill[]>([]);
+  const [billsLoading, setBillsLoading] = useState(true);
+  const [billsError, setBillsError] = useState<string | null>(null);
+  const [subscriptions, setSubscriptions] = useState<Subscription[]>([]);
+  const [subscriptionsLoading, setSubscriptionsLoading] = useState(true);
+  const [subscriptionsError, setSubscriptionsError] = useState<string | null>(null);
 
   const requestIdRef = useRef(0);
   const budgetsRequestRef = useRef(0);
   const recurringRequestRef = useRef(0);
+  const billsRequestRef = useRef(0);
+  const subscriptionsRequestRef = useRef(0);
   const hasLoadedRef = useRef(false);
 
   const fetchSummary = useCallback(async (requestedMonth: string, initial: boolean) => {
@@ -205,6 +219,77 @@ export function Dashboard() {
     void fetchRecurring(true);
   }, [fetchRecurring]);
 
+  const fetchBills = useCallback(async () => {
+    const requestId = billsRequestRef.current + 1;
+    billsRequestRef.current = requestId;
+
+    setBillsLoading(true);
+    setBillsError(null);
+
+    try {
+      const result = await billApi.getBills({ active: true });
+      if (requestId !== billsRequestRef.current) {
+        return;
+      }
+      setBills(result.bills);
+    } catch (error) {
+      if (requestId !== billsRequestRef.current) {
+        return;
+      }
+      setBills([]);
+      setBillsError(getApiErrorMessage(error));
+    } finally {
+      if (requestId === billsRequestRef.current) {
+        setBillsLoading(false);
+      }
+    }
+  }, []);
+
+  const fetchSubscriptions = useCallback(async () => {
+    const requestId = subscriptionsRequestRef.current + 1;
+    subscriptionsRequestRef.current = requestId;
+
+    setSubscriptionsLoading(true);
+    setSubscriptionsError(null);
+
+    try {
+      const result = await subscriptionApi.getSubscriptions({ active: true });
+      if (requestId !== subscriptionsRequestRef.current) {
+        return;
+      }
+      setSubscriptions(result.subscriptions);
+    } catch (error) {
+      if (requestId !== subscriptionsRequestRef.current) {
+        return;
+      }
+      setSubscriptions([]);
+      setSubscriptionsError(getApiErrorMessage(error));
+    } finally {
+      if (requestId === subscriptionsRequestRef.current) {
+        setSubscriptionsLoading(false);
+      }
+    }
+  }, []);
+
+  useEffect(() => {
+    void fetchBills();
+    void fetchSubscriptions();
+  }, [fetchBills, fetchSubscriptions]);
+
+  const upcomingBills = useMemo(() => {
+    return bills
+      .filter((bill) => bill.status !== 'CANCELLED')
+      .sort((a, b) => (a.nextDueDate < b.nextDueDate ? -1 : 1))
+      .slice(0, 5);
+  }, [bills]);
+
+  const upcomingSubscriptions = useMemo(() => {
+    return subscriptions
+      .filter((subscription) => subscription.status === 'ACTIVE')
+      .sort((a, b) => (a.nextRenewalDate < b.nextRenewalDate ? -1 : 1))
+      .slice(0, 5);
+  }, [subscriptions]);
+
   const upcomingRecurring = useMemo(() => {
     return recurringRules
       .filter((rule) => rule.isActive)
@@ -222,6 +307,8 @@ export function Dashboard() {
     { name: 'Transactions', href: '/transactions', icon: CreditCard, current: false },
     { name: 'Budgets', href: '/budgets', icon: Target, current: false },
     { name: 'Recurring', href: '/recurring-transactions', icon: Repeat, current: false },
+    { name: 'Bills', href: '/bills', icon: Receipt, current: false },
+    { name: 'Subscriptions', href: '/subscriptions', icon: RefreshCw, current: false },
     { name: 'Analytics', href: '#', icon: TrendingUp, current: false },
     { name: 'Settings', href: '/profile', icon: Settings, current: false },
   ];
@@ -693,6 +780,115 @@ export function Dashboard() {
                 ))}
               </ul>
             )}
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mt-6">
+          <div className="card">
+            <div className="card-header flex items-center justify-between">
+              <h2 className="heading-4">Upcoming Bills</h2>
+              <Link to="/bills" className="text-sm text-primary hover:underline">
+                View bills
+              </Link>
+            </div>
+            <div className="card-body">
+              {billsLoading && (
+                <p className="text-sm text-text-muted text-center py-6">Loading bills...</p>
+              )}
+
+              {!billsLoading && billsError && (
+                <span className="text-sm text-error block text-center py-6" role="alert">
+                  {billsError}
+                </span>
+              )}
+
+              {!billsLoading && !billsError && upcomingBills.length === 0 && (
+                <p className="text-sm text-text-muted text-center py-6">
+                  No bills awaiting payment.{' '}
+                  <Link to="/bills" className="text-primary hover:underline">
+                    Add one
+                  </Link>{' '}
+                  to track what is due.
+                </p>
+              )}
+
+              {!billsLoading && !billsError && upcomingBills.length > 0 && (
+                <ul className="divide-y divide-border">
+                  {upcomingBills.map((bill) => (
+                    <li
+                      key={bill.id}
+                      className="py-3 flex items-center justify-between gap-4 first:pt-0 last:pb-0"
+                    >
+                      <div className="min-w-0">
+                        <p className="text-sm text-text truncate">{bill.name}</p>
+                        <p className="text-xs text-text-muted mt-0.5">
+                          {bill.status === 'PAID' ? 'Paid' : 'Due'} ·{' '}
+                          {formatDate(bill.nextDueDate)}
+                        </p>
+                      </div>
+                      <span className="text-sm font-medium whitespace-nowrap text-error">
+                        {formatAmount(bill.amount)}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          </div>
+
+          <div className="card">
+            <div className="card-header flex items-center justify-between">
+              <h2 className="heading-4">Upcoming Subscriptions</h2>
+              <Link to="/subscriptions" className="text-sm text-primary hover:underline">
+                View subscriptions
+              </Link>
+            </div>
+            <div className="card-body">
+              {subscriptionsLoading && (
+                <p className="text-sm text-text-muted text-center py-6">
+                  Loading subscriptions...
+                </p>
+              )}
+
+              {!subscriptionsLoading && subscriptionsError && (
+                <span className="text-sm text-error block text-center py-6" role="alert">
+                  {subscriptionsError}
+                </span>
+              )}
+
+              {!subscriptionsLoading && !subscriptionsError && upcomingSubscriptions.length === 0 && (
+                <p className="text-sm text-text-muted text-center py-6">
+                  No active subscriptions.{' '}
+                  <Link to="/subscriptions" className="text-primary hover:underline">
+                    Add one
+                  </Link>{' '}
+                  to track renewal dates.
+                </p>
+              )}
+
+              {!subscriptionsLoading &&
+                !subscriptionsError &&
+                upcomingSubscriptions.length > 0 && (
+                  <ul className="divide-y divide-border">
+                    {upcomingSubscriptions.map((subscription) => (
+                      <li
+                        key={subscription.id}
+                        className="py-3 flex items-center justify-between gap-4 first:pt-0 last:pb-0"
+                      >
+                        <div className="min-w-0">
+                          <p className="text-sm text-text truncate">{subscription.name}</p>
+                          <p className="text-xs text-text-muted mt-0.5">
+                            Renews · {formatDate(subscription.nextRenewalDate)}
+                          </p>
+                        </div>
+                        <span className="text-sm font-medium whitespace-nowrap text-error">
+                          {formatAmount(subscription.amount)}
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+            </div>
           </div>
         </div>
       </main>

@@ -183,6 +183,8 @@ model Category {
   transactions     Transaction[]
   budgetCategories BudgetCategory[]
   recurringTransactions RecurringTransaction[]
+  bills            Bill[]
+  subscriptions    Subscription[]
 
   @@unique([userId, name])
   @@index([userId])
@@ -402,8 +404,8 @@ model WealthSnapshot {
 model Bill {
   id          String     @id @default(cuid())
   userId      String
+  categoryId  String?
   name        String
-  category    String?
   amount      Decimal    @db.Decimal(15, 2)
   frequency   Frequency
   dueDate     DateTime
@@ -413,9 +415,11 @@ model Bill {
   createdAt   DateTime   @default(now())
   updatedAt   DateTime   @updatedAt
 
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user     User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  category Category? @relation(fields: [categoryId], references: [id], onDelete: Restrict)
 
   @@index([userId])
+  @@index([categoryId])
   @@index([nextDueDate])
   @@map("bills")
 }
@@ -423,8 +427,8 @@ model Bill {
 model Subscription {
   id              String             @id @default(cuid())
   userId          String
+  categoryId      String?
   name            String
-  category        String?
   amount          Decimal            @db.Decimal(15, 2)
   billingCycle    Frequency
   nextRenewalDate DateTime
@@ -432,9 +436,11 @@ model Subscription {
   createdAt       DateTime           @default(now())
   updatedAt       DateTime           @updatedAt
 
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user     User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  category Category? @relation(fields: [categoryId], references: [id], onDelete: Restrict)
 
   @@index([userId])
+  @@index([categoryId])
   @@index([nextRenewalDate])
   @@map("subscriptions")
 }

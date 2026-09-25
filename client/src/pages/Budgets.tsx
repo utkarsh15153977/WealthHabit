@@ -8,6 +8,8 @@ import {
   Plus,
   Settings,
     Target,
+    Receipt,
+    RefreshCw,
     Repeat,
     TrendingUp,
   Trash2,
@@ -130,6 +132,8 @@ export function Budgets() {
     { name: 'Transactions', href: '/transactions', icon: CreditCard, current: false },
     { name: 'Budgets', href: '/budgets', icon: Target, current: true },
     { name: 'Recurring', href: '/recurring-transactions', icon: Repeat, current: false },
+    { name: 'Bills', href: '/bills', icon: Receipt, current: false },
+    { name: 'Subscriptions', href: '/subscriptions', icon: RefreshCw, current: false },
     { name: 'Analytics', href: '#', icon: TrendingUp, current: false },
     { name: 'Settings', href: '/profile', icon: Settings, current: false },
   ];

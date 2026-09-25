@@ -14,6 +14,8 @@ import categoryRoutes from './routes/categoryRoutes.js';
 import transactionRoutes from './routes/transactionRoutes.js';
 import budgetRoutes from './routes/budgetRoutes.js';
 import recurringTransactionRoutes from './routes/recurringTransactionRoutes.js';
+import billRoutes from './routes/billRoutes.js';
+import subscriptionRoutes from './routes/subscriptionRoutes.js';
 import dashboardRoutes from './routes/dashboardRoutes.js';
 
 const app = express();
@@ -42,6 +44,8 @@ app.use('/api/categories', categoryRoutes);
 app.use('/api/transactions', transactionRoutes);
 app.use('/api/budgets', budgetRoutes);
 app.use('/api/recurring-transactions', recurringTransactionRoutes);
+app.use('/api/bills', billRoutes);
+app.use('/api/subscriptions', subscriptionRoutes);
 app.use('/api/dashboard', dashboardRoutes);
 
 app.use(notFoundHandler);
