@@ -4,6 +4,7 @@ import {
   ArrowLeft,
   CreditCard,
   LayoutDashboard,
+  ListChecks,
   Settings,
     Target,
     Receipt,
@@ -139,6 +140,7 @@ export function Profile() {
     { name: 'Recurring', href: '/recurring-transactions', icon: Repeat, current: false },
     { name: 'Bills', href: '/bills', icon: Receipt, current: false },
     { name: 'Subscriptions', href: '/subscriptions', icon: RefreshCw, current: false },
+    { name: 'Habits', href: '/habits', icon: ListChecks, current: false },
     { name: 'Analytics', href: '/dashboard', icon: TrendingUp, current: false },
     { name: 'Settings', href: '/profile', icon: Settings, current: true },
   ];

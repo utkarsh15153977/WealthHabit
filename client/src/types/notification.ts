@@ -3,7 +3,8 @@ export type NotificationType =
   | 'BILL_UPCOMING'
   | 'BILL_OVERDUE'
   | 'SUBSCRIPTION_UPCOMING'
-  | 'RECURRING_TRANSACTION_UPCOMING';
+  | 'RECURRING_TRANSACTION_UPCOMING'
+  | 'HABIT_REMINDER';
 
 export interface Notification {
   id: string;

@@ -86,6 +86,7 @@ enum NotificationType {
   BILL_OVERDUE
   SUBSCRIPTION_UPCOMING
   RECURRING_TRANSACTION_UPCOMING
+  HABIT_REMINDER
 }
 
 model User {
@@ -291,7 +292,10 @@ model FinancialHabit {
   frequency    Frequency
   category     String?
   reminderTime DateTime?
+  target       Decimal?  @db.Decimal(15, 2)
+  unit         String?
   startDate    DateTime
+  endDate      DateTime?
   isActive     Boolean   @default(true)
   createdAt    DateTime  @default(now())
   updatedAt    DateTime  @updatedAt

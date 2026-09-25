@@ -190,6 +190,57 @@ async function collectRecurringCandidates(
   return candidates;
 }
 
+/**
+ * DAILY habits that are still incomplete for the current UTC day produce a
+ * reminder notification, deduped per habit + day. Weekly/monthly reminders
+ * are intentionally deferred (on-demand only, no scheduler).
+ */
+async function collectHabitCandidates(
+  userId: string,
+  today: Date
+): Promise<NotificationCandidate[]> {
+  const habits = await prisma.financialHabit.findMany({
+    where: {
+      userId,
+      isActive: true,
+      frequency: 'DAILY',
+      startDate: { lte: today },
+      OR: [{ endDate: null }, { endDate: { gte: today } }],
+    },
+  });
+
+  if (habits.length === 0) {
+    return [];
+  }
+
+  const completed = await prisma.habitCompletion.findMany({
+    where: {
+      completionDate: today,
+      habitId: { in: habits.map((habit) => habit.id) },
+    },
+    select: { habitId: true },
+  });
+  const completedIds = new Set(
+    completed.map((completion) => completion.habitId)
+  );
+
+  const candidates: NotificationCandidate[] = [];
+
+  for (const habit of habits) {
+    if (completedIds.has(habit.id)) continue;
+
+    candidates.push({
+      type: NotificationType.HABIT_REMINDER,
+      title: `${habit.name} is waiting for you today`,
+      message: `You have not completed your ${habit.name} habit today.`,
+      dedupKey: `habit:${habit.id}:${dayKey(today)}:reminder`,
+      metadata: { habitId: habit.id },
+    });
+  }
+
+  return candidates;
+}
+
 export async function generateNotificationsForUser(userId: string): Promise<number> {
   const today = startOfUtcDay(new Date());
   const monthKey = currentUtcMonth();
@@ -199,6 +250,7 @@ export async function generateNotificationsForUser(userId: string): Promise<numb
     ...(await collectBillCandidates(userId, today)),
     ...(await collectSubscriptionCandidates(userId, today)),
     ...(await collectRecurringCandidates(userId, today)),
+    ...(await collectHabitCandidates(userId, today)),
   ];
 
   if (candidates.length === 0) {

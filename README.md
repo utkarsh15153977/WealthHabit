@@ -16,7 +16,7 @@ WealthHabit is a web application that helps users build better financial habits,
 - **Notifications** - Smart alerts and reminders
 - **Profile & Settings** - User preferences
 
-> ✅ Implemented: **Dashboard, Transactions, Budgets, Bills & Subscriptions, Recurring Transactions, Profile, and the in-app Notifications center.** The remaining features above are **planned** and not implemented yet.
+> ✅ Implemented: **Dashboard, Transactions, Budgets, Financial Habits, Bills & Subscriptions, Recurring Transactions, Profile, and the in-app Notifications center.** The remaining features above are **planned** and not implemented yet.
 
 ## Tech Stack
 
@@ -229,8 +229,8 @@ npm test
 ## Current Status
 
 **Core money-management features are implemented: authentication, categories,
-transactions, budgets, recurring transactions, bills & subscriptions, dashboard
-analytics, and the in-app notifications center.**
+transactions, budgets, recurring transactions, bills & subscriptions, financial
+habits, dashboard analytics, and the in-app notifications center.**
 
 Implemented:
 
@@ -239,13 +239,22 @@ Implemented:
 - ✅ Monthly budgets with Decimal-based progress and thresholds
 - ✅ Recurring transactions with on-demand occurrence generation
 - ✅ Bills & Subscriptions with due-state tracking and renewal advancement
-- ✅ Dashboard summary with budgets, recurring rules and upcoming obligations
+- ✅ Dashboard summary with budgets, recurring rules, upcoming obligations and
+  a financial-habits summary card
+- ✅ **Financial habits** — CRUD + activation, idempotent completion
+  (`POST/DELETE /api/habits/:id/complete`), completion history and progress
+  (`completionRate` over elapsed periods). Completions are informational only:
+  they never create or mutate transactions, budgets, bills, subscriptions or
+  recurring rules, and there is no scheduler or streak calculation. Weekly
+  periods anchor to Monday (ISO-8601 UTC weeks), monthly to the 1st.
 - ✅ **In-app notifications** — budget thresholds (80%/100%), bill reminders
-  (≤3 days) and overdue alerts, subscription renewal reminders (≤3 days), and
-  recurring transaction due reminders (≤1 day). Notifications are generated
-  on demand only (`POST /api/notifications/generate`), deduplicated per user,
-  and never create or modify financial records. No scheduler, queue, email,
-  or push channel is involved.
-- ✅ Server test suite (372 tests) + client unit tests (13 tests)
+  (≤3 days) and overdue alerts, subscription renewal reminders (≤3 days),
+  recurring transaction due reminders (≤1 day), and daily habit reminders
+  (`HABIT_REMINDER`, deduped per habit + UTC day, skipped when already
+  completed or inactive). Notifications are generated on demand only
+  (`POST /api/notifications/generate`), deduplicated per user, and never
+  create or modify financial records. No scheduler, queue, email, or push
+  channel is involved.
+- ✅ Server test suite (450 tests) + client unit tests (30 tests)
 
 Next milestone: **Phase 4 planning**

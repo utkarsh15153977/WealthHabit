@@ -23,6 +23,7 @@ const Subscriptions = lazy(() =>
 const Notifications = lazy(() =>
   import('../pages/Notifications').then((m) => ({ default: m.Notifications }))
 );
+const Habits = lazy(() => import('../pages/Habits').then((m) => ({ default: m.Habits })));
 
 export const routes: RouteObject[] = [
   {
@@ -109,6 +110,14 @@ export const routes: RouteObject[] = [
       </ProtectedRoute>
     ),
   },
+  {
+    path: '/habits',
+    element: (
+      <ProtectedRoute>
+        {createElement(WithSuspense(Habits))}
+      </ProtectedRoute>
+    ),
+  },
 ];
 
 export const publicRoutes = ['/', '/login', '/register'];
@@ -121,4 +130,5 @@ export const protectedRoutes = [
   '/bills',
   '/subscriptions',
   '/notifications',
+  '/habits',
 ];

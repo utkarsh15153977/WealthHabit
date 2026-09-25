@@ -5,6 +5,7 @@ import {
   CheckCheck,
   CreditCard,
   LayoutDashboard,
+  ListChecks,
   LogOut,
   Receipt,
   RefreshCw,
@@ -30,6 +31,7 @@ const TYPE_ICONS: Record<NotificationType, LucideIcon> = {
   BILL_OVERDUE: Receipt,
   SUBSCRIPTION_UPCOMING: RefreshCw,
   RECURRING_TRANSACTION_UPCOMING: Repeat,
+  HABIT_REMINDER: ListChecks,
 };
 
 function createdAtLabel(iso: string): string {
@@ -60,6 +62,7 @@ export function Notifications() {
     { name: 'Recurring', href: '/recurring-transactions', icon: Repeat, current: false },
     { name: 'Bills', href: '/bills', icon: Receipt, current: false },
     { name: 'Subscriptions', href: '/subscriptions', icon: RefreshCw, current: false },
+    { name: 'Habits', href: '/habits', icon: ListChecks, current: false },
     { name: 'Analytics', href: '#', icon: TrendingUp, current: false },
     { name: 'Settings', href: '/profile', icon: Settings, current: false },
   ];

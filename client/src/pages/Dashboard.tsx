@@ -13,6 +13,7 @@ import {
 import {
   LogOut,
   LayoutDashboard,
+  ListChecks,
   CreditCard,
     Target,
     Receipt,
@@ -36,8 +37,10 @@ import { recurringTransactionApi } from '../services/recurringTransactionApi';
 import { billApi } from '../services/billApi';
 import { subscriptionApi } from '../services/subscriptionApi';
 import { notificationApi } from '../services/notificationApi';
+import { habitApi } from '../services/habitApi';
 import { formatDate, formatMonth } from '../utils/date';
 import type { DashboardSummaryData } from '../types/dashboard';
+import type { HabitWithProgress } from '../types/habit';
 import type { BudgetWithProgress } from '../types/budget';
 import type { RecurringTransaction } from '../types/recurringTransaction';
 import type { Bill } from '../types/bill';
@@ -113,6 +116,10 @@ export function Dashboard() {
   const [unreadNotifications, setUnreadNotifications] = useState(0);
   const [notificationsLoading, setNotificationsLoading] = useState(true);
   const [notificationsError, setNotificationsError] = useState<string | null>(null);
+  const [habitSummary, setHabitSummary] = useState<HabitWithProgress[]>([]);
+  const [habitTotal, setHabitTotal] = useState(0);
+  const [habitsLoading, setHabitsLoading] = useState(true);
+  const [habitsError, setHabitsError] = useState<string | null>(null);
 
   const requestIdRef = useRef(0);
   const budgetsRequestRef = useRef(0);
@@ -120,6 +127,7 @@ export function Dashboard() {
   const billsRequestRef = useRef(0);
   const subscriptionsRequestRef = useRef(0);
   const notificationsRequestRef = useRef(0);
+  const habitsRequestRef = useRef(0);
   const hasLoadedRef = useRef(false);
 
   const fetchSummary = useCallback(async (requestedMonth: string, initial: boolean) => {
@@ -312,6 +320,49 @@ export function Dashboard() {
     void fetchNotificationCount();
   }, [fetchNotificationCount]);
 
+  const fetchHabits = useCallback(async () => {
+    const requestId = habitsRequestRef.current + 1;
+    habitsRequestRef.current = requestId;
+
+    setHabitsLoading(true);
+    setHabitsError(null);
+
+    try {
+      const result = await habitApi.getHabits({
+        active: true,
+        includeProgress: true,
+        pageSize: 50,
+      });
+      if (requestId !== habitsRequestRef.current) {
+        return;
+      }
+      setHabitSummary(result.habits);
+      setHabitTotal(result.total);
+    } catch (error) {
+      if (requestId !== habitsRequestRef.current) {
+        return;
+      }
+      setHabitSummary([]);
+      setHabitTotal(0);
+      setHabitsError(getApiErrorMessage(error));
+    } finally {
+      if (requestId === habitsRequestRef.current) {
+        setHabitsLoading(false);
+      }
+    }
+  }, []);
+
+  useEffect(() => {
+    void fetchHabits();
+  }, [fetchHabits]);
+
+  const habitsCompleted = useMemo(
+    () =>
+      habitSummary.filter((habit) => habit.progress?.currentPeriod.completed === true)
+        .length,
+    [habitSummary]
+  );
+
   const upcomingBills = useMemo(() => {
     return bills
       .filter((bill) => bill.status !== 'CANCELLED')
@@ -345,6 +396,7 @@ export function Dashboard() {
     { name: 'Recurring', href: '/recurring-transactions', icon: Repeat, current: false },
     { name: 'Bills', href: '/bills', icon: Receipt, current: false },
     { name: 'Subscriptions', href: '/subscriptions', icon: RefreshCw, current: false },
+    { name: 'Habits', href: '/habits', icon: ListChecks, current: false },
     { name: 'Analytics', href: '#', icon: TrendingUp, current: false },
     { name: 'Settings', href: '/profile', icon: Settings, current: false },
   ];
@@ -959,6 +1011,76 @@ export function Dashboard() {
                     className="inline-block mt-3 text-sm text-primary hover:underline"
                   >
                     View notifications →
+                  </Link>
+                </div>
+              )}
+            </div>
+          </div>
+
+          <div className="card">
+            <div className="card-header flex items-center justify-between">
+              <h2 className="heading-4">Financial Habits</h2>
+              <Link to="/habits" className="text-sm text-primary hover:underline">
+                Manage habits
+              </Link>
+            </div>
+            <div className="card-body">
+              {habitsLoading && (
+                <p className="text-sm text-text-muted text-center py-6">
+                  Loading habits...
+                </p>
+              )}
+
+              {!habitsLoading && habitsError && (
+                <span className="text-sm text-error block text-center py-6" role="alert">
+                  {habitsError}
+                </span>
+              )}
+
+              {!habitsLoading && !habitsError && habitTotal === 0 && (
+                <p className="text-sm text-text-muted text-center py-6">
+                  No active habits.{' '}
+                  <Link to="/habits" className="text-primary hover:underline">
+                    Create one
+                  </Link>{' '}
+                  to start building better money routines.
+                </p>
+              )}
+
+              {!habitsLoading && !habitsError && habitTotal > 0 && (
+                <div className="text-center py-4" data-testid="dashboard-habit-summary">
+                  <p className="text-3xl font-semibold text-text" data-testid="dashboard-habits-completed">
+                    {habitsCompleted} of {habitTotal}
+                  </p>
+                  <p className="text-sm text-text-muted mt-1">
+                    active habits completed for the current period
+                  </p>
+                  <ul className="mt-4 space-y-2 text-left">
+                    {habitSummary.slice(0, 4).map((habit) => (
+                      <li
+                        key={habit.id}
+                        className="flex items-center justify-between gap-3 text-sm"
+                      >
+                        <span className="text-text truncate">{habit.name}</span>
+                        <span
+                          className={
+                            habit.progress?.currentPeriod.completed
+                              ? 'text-success whitespace-nowrap'
+                              : 'text-text-muted whitespace-nowrap'
+                          }
+                        >
+                          {habit.progress?.currentPeriod.completed
+                            ? 'Completed'
+                            : 'Pending'}
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                  <Link
+                    to="/habits"
+                    className="inline-block mt-3 text-sm text-primary hover:underline"
+                  >
+                    View habits →
                   </Link>
                 </div>
               )}

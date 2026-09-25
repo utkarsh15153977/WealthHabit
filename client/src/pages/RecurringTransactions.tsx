@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import {
   CreditCard,
   LayoutDashboard,
+  ListChecks,
   LogOut,
   Pencil,
   Plus,
@@ -161,6 +162,7 @@ export function RecurringTransactions() {
     { name: 'Recurring', href: '/recurring-transactions', icon: Repeat, current: true },
     { name: 'Bills', href: '/bills', icon: Receipt, current: false },
     { name: 'Subscriptions', href: '/subscriptions', icon: RefreshCw, current: false },
+    { name: 'Habits', href: '/habits', icon: ListChecks, current: false },
     { name: 'Analytics', href: '#', icon: TrendingUp, current: false },
     { name: 'Settings', href: '/profile', icon: Settings, current: false },
   ];

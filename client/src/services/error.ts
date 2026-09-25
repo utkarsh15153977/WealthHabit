@@ -25,6 +25,9 @@ const CODE_MESSAGES: Record<string, string> = {
   CATEGORY_IN_USE: 'This category is used by transactions and cannot be deleted',
   CATEGORY_ALREADY_EXISTS: 'A category with this name already exists',
   NOTIFICATION_NOT_FOUND: 'Notification not found',
+  HABIT_NOT_FOUND: 'Habit not found',
+  HABIT_INACTIVE: 'This habit is no longer active',
+  HABIT_INVALID_DATE_RANGE: 'This habit is not active for the current period',
 };
 
 const STATUS_MESSAGES: Record<number, string> = {
