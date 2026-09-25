@@ -5,8 +5,9 @@ import {
   CreditCard,
   LayoutDashboard,
   Settings,
-  Target,
-  TrendingUp,
+    Target,
+    Repeat,
+    TrendingUp,
   User,
 } from 'lucide-react';
 import { useForm } from 'react-hook-form';
@@ -131,7 +132,8 @@ export function Profile() {
   const navigation = [
     { name: 'Dashboard', href: '/dashboard', icon: LayoutDashboard, current: false },
     { name: 'Transactions', href: '/transactions', icon: CreditCard, current: false },
-    { name: 'Budgets', href: '/dashboard', icon: Target, current: false },
+    { name: 'Budgets', href: '/budgets', icon: Target, current: false },
+    { name: 'Recurring', href: '/recurring-transactions', icon: Repeat, current: false },
     { name: 'Analytics', href: '/dashboard', icon: TrendingUp, current: false },
     { name: 'Settings', href: '/profile', icon: Settings, current: true },
   ];

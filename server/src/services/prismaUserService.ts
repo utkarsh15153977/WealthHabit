@@ -1,7 +1,6 @@
-import { PrismaClient, Prisma, User, FinancialProfile } from '@prisma/client';
+import { Prisma, User, FinancialProfile } from '@prisma/client';
 import { UpdateMeInput } from '../schemas/userSchemas.js';
-
-const prisma = new PrismaClient();
+import { prisma } from '../config/prisma.js';
 
 export type UserWithFinancialProfile = User & {
   financialProfile: FinancialProfile | null;

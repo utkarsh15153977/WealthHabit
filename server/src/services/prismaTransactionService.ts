@@ -1,7 +1,7 @@
-import { PrismaClient, Prisma, Transaction, Category, CategoryType, TransactionType } from '@prisma/client';
+import { Prisma, Transaction, Category, CategoryType, TransactionType } from '@prisma/client';
 import { CreateTransactionInput, UpdateTransactionInput, ListTransactionsQuery } from '../schemas/transactionSchemas.js';
-
-const prisma = new PrismaClient();
+import { prisma } from '../config/prisma.js';
+import { addUtcDays, startOfUtcDay } from '../utils/date.js';
 
 export type TransactionWithCategory = Transaction & {
   category: Category;
@@ -46,8 +46,8 @@ export async function listUserTransactions(
 
   if (query?.dateFrom || query?.dateTo) {
     const dateFilter: Prisma.DateTimeFilter = {};
-    if (query.dateFrom) dateFilter.gte = query.dateFrom;
-    if (query.dateTo) dateFilter.lte = query.dateTo;
+    if (query.dateFrom) dateFilter.gte = startOfUtcDay(query.dateFrom);
+    if (query.dateTo) dateFilter.lt = addUtcDays(query.dateTo, 1);
     and.push({ transactionDate: dateFilter });
   }
 

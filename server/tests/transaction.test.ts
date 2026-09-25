@@ -246,6 +246,52 @@ describe('Transactions API', () => {
     expect(res.body.data.transactions[0].amount).toBe(20);
   });
 
+  it('treats dateTo as an inclusive calendar day', async () => {
+    await createTx(tokenA, {
+      categoryId: expenseCatA,
+      type: 'EXPENSE',
+      amount: '5',
+      transactionDate: '2026-03-10T23:30:00.000Z',
+    });
+    await createTx(tokenA, {
+      categoryId: expenseCatA,
+      type: 'EXPENSE',
+      amount: '7',
+      transactionDate: '2026-03-11T00:00:00.000Z',
+    });
+
+    const res = await request(app)
+      .get('/api/transactions?dateFrom=2026-03-01&dateTo=2026-03-10')
+      .set('Authorization', `Bearer ${tokenA}`);
+
+    expect(res.status).toBe(200);
+    expect(res.body.data.transactions).toHaveLength(1);
+    expect(res.body.data.transactions[0].amount).toBe(5);
+  });
+
+  it('treats dateFrom as an inclusive calendar day', async () => {
+    await createTx(tokenA, {
+      categoryId: expenseCatA,
+      type: 'EXPENSE',
+      amount: '3',
+      transactionDate: '2026-03-01T00:30:00.000Z',
+    });
+    await createTx(tokenA, {
+      categoryId: expenseCatA,
+      type: 'EXPENSE',
+      amount: '4',
+      transactionDate: '2026-02-28T23:59:00.000Z',
+    });
+
+    const res = await request(app)
+      .get('/api/transactions?dateFrom=2026-03-01&dateTo=2026-03-31')
+      .set('Authorization', `Bearer ${tokenA}`);
+
+    expect(res.status).toBe(200);
+    expect(res.body.data.transactions).toHaveLength(1);
+    expect(res.body.data.transactions[0].amount).toBe(3);
+  });
+
   it('paginates list', async () => {
     for (let i = 0; i < 3; i++) {
       await createTx(tokenA, {

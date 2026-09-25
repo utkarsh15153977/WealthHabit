@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { TransactionType } from '@prisma/client';
 
-const transactionTypeValues = Object.values(TransactionType) as [
+export const transactionTypeValues = Object.values(TransactionType) as [
   TransactionType,
   ...TransactionType[],
 ];
@@ -9,7 +9,7 @@ const transactionTypeValues = Object.values(TransactionType) as [
 const MONEY_PATTERN = /^\d+(\.\d{1,2})?$/;
 const MONEY_MAX = 9999999999999.99;
 
-const amountSchema = z
+export const amountSchema = z
   .union([z.string(), z.number()])
   .transform((value, ctx) => {
     const raw = typeof value === 'number' ? value.toFixed(2) : value.trim();

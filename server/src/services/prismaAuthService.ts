@@ -1,9 +1,8 @@
-import { PrismaClient, User, Session, AccountStatus, Role, FinancialProfile } from '@prisma/client';
+import { User, Session, AccountStatus, Role, FinancialProfile } from '@prisma/client';
 import { AuthenticatedUser } from '../types/auth.js';
 import { authService } from './authService.js';
+import { prisma } from '../config/prisma.js';
 import { randomBytes } from 'crypto';
-
-const prisma = new PrismaClient();
 
 export async function findUserByEmail(email: string): Promise<User | null> {
   return prisma.user.findUnique({

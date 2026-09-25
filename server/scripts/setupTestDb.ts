@@ -1,5 +1,5 @@
-import { defineConfig } from 'vitest/config';
 import { config } from 'dotenv';
+import { spawnSync } from 'node:child_process';
 
 config();
 
@@ -19,10 +19,6 @@ function deriveTestDatabaseUrl(): string {
   const url = new URL(configured);
   const databaseName = url.pathname.replace(/^\//, '');
 
-  if (!databaseName) {
-    throw new Error('DATABASE_URL does not contain a database name.');
-  }
-
   if (!databaseName.endsWith('_test')) {
     url.pathname = `/${databaseName}_test`;
   }
@@ -31,18 +27,14 @@ function deriveTestDatabaseUrl(): string {
 }
 
 const testDatabaseUrl = deriveTestDatabaseUrl();
+const databaseName = new URL(testDatabaseUrl).pathname.replace(/^\//, '');
 
-export default defineConfig({
-  test: {
-    globals: true,
-    environment: 'node',
-    env: {
-      DATABASE_URL: testDatabaseUrl,
-    },
-    setupFiles: ['./tests/setup.ts'],
-    include: ['tests/**/*.test.ts'],
-    testTimeout: 10000,
-    hookTimeout: 10000,
-    fileParallelism: false,
-  },
+console.log(`Test database: ${databaseName}`);
+
+const result = spawnSync('npx', ['prisma', 'migrate', 'deploy'], {
+  stdio: 'inherit',
+  shell: true,
+  env: { ...process.env, DATABASE_URL: testDatabaseUrl },
 });
+
+process.exit(result.status ?? 1);

@@ -141,7 +141,12 @@ WealthHabit/
    npm run db:migrate
    ```
 
-7. **Start development servers**
+7. **Seed default categories**
+   ```bash
+   npm run db:seed
+   ```
+
+8. **Start development servers**
    ```bash
    npm run dev
    ```
@@ -159,7 +164,7 @@ WealthHabit/
 ### Root (.env)
 | Variable | Description | Default |
 |----------|-------------|---------|
-| DATABASE_URL | PostgreSQL connection string | postgresql://wealthhabit:wealthhabit@localhost:5432/wealthhabit |
+| DATABASE_URL | PostgreSQL connection string | postgresql://wealthhabit:wealthhabit@localhost:5433/wealthhabit |
 | PORT | Backend server port | 5000 |
 | NODE_ENV | Environment mode | development |
 | CLIENT_URL | Frontend URL for CORS | http://localhost:5173 |
@@ -192,7 +197,31 @@ WealthHabit/
 | `npm run db:down` | Stop PostgreSQL container |
 | `npm run db:generate` | Generate Prisma client |
 | `npm run db:migrate` | Run database migrations |
+| `npm run db:seed` | Seed default income/expense categories |
+| `npm run db:test:setup` | Create/prepare the dedicated test database |
 | `npm run db:studio` | Open Prisma Studio |
+| `npm test` | Run backend tests (against the test database) |
+
+## Testing
+
+Backend tests run against a **dedicated test database** and never touch development data.
+
+| Database | Purpose |
+|----------|---------|
+| `wealthhabit` | Development (`server/.env` → `DATABASE_URL`) |
+| `wealthhabit_test` | Automated tests (derived automatically by `server/vitest.config.ts`) |
+
+The test database name is derived from `DATABASE_URL` by appending `_test`
+(e.g. `.../wealthhabit` → `.../wealthhabit_test`). To use a different one, set
+`TEST_DATABASE_URL`. As a safety net, `server/tests/setup.ts` refuses to run
+unless the resolved database name ends with `_test`.
+
+First-time setup:
+
+```bash
+npm run db:test:setup   # creates wealthhabit_test and applies migrations
+npm test
+```
 
 ## Current Status
 

@@ -1,4 +1,4 @@
-import { PrismaClient, Prisma, TransactionType, CategoryType } from '@prisma/client';
+import { Prisma, TransactionType, CategoryType } from '@prisma/client';
 import type { DashboardSummaryQuery } from '../schemas/dashboardSchemas.js';
 import type {
   DashboardSpendingCategory,
@@ -6,32 +6,9 @@ import type {
   DashboardTrendPoint,
 } from '../types/dashboard.js';
 import type { TransactionData, TransactionCategorySummary } from '../types/transaction.js';
-
-const prisma = new PrismaClient();
-
-const ZERO = new Prisma.Decimal(0);
-
-function toUtcMonthKey(year: number, monthIndex: number): string {
-  return `${year}-${String(monthIndex + 1).padStart(2, '0')}`;
-}
-
-function currentUtcMonth(): string {
-  const now = new Date();
-  return toUtcMonthKey(now.getUTCFullYear(), now.getUTCMonth());
-}
-
-function parseMonthKey(month: string): { year: number; monthIndex: number } {
-  const [year, monthNum] = month.split('-').map(Number);
-  return { year, monthIndex: monthNum - 1 };
-}
-
-function monthBounds(month: string): { start: Date; end: Date } {
-  const { year, monthIndex } = parseMonthKey(month);
-  return {
-    start: new Date(Date.UTC(year, monthIndex, 1)),
-    end: new Date(Date.UTC(year, monthIndex + 1, 1)),
-  };
-}
+import { prisma } from '../config/prisma.js';
+import { currentUtcMonth, monthBounds, parseMonthKey, toUtcMonthKey } from '../utils/date.js';
+import { ZERO, roundMoney, roundRate } from '../utils/money.js';
 
 function listTrendMonths(month: string, count: number): string[] {
   const { year, monthIndex } = parseMonthKey(month);
@@ -41,14 +18,6 @@ function listTrendMonths(month: string, count: number): string[] {
     months.push(toUtcMonthKey(date.getUTCFullYear(), date.getUTCMonth()));
   }
   return months;
-}
-
-function roundMoney(value: Prisma.Decimal): number {
-  return value.toDecimalPlaces(2).toNumber();
-}
-
-function roundRate(value: Prisma.Decimal): number {
-  return value.toDecimalPlaces(2).toNumber();
 }
 
 function calculateSavingsRate(income: Prisma.Decimal, expenses: Prisma.Decimal): number {

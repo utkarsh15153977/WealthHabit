@@ -1,17 +1,15 @@
 import { randomBytes, createHash } from 'crypto';
 import { PrismaClient, AuthTokenType } from '@prisma/client';
+import { prisma as sharedPrisma } from '../config/prisma.js';
 
-let prisma: PrismaClient;
+let prisma: PrismaClient | null = null;
 
 export function setPrismaClient(client: PrismaClient): void {
   prisma = client;
 }
 
 function getPrisma(): PrismaClient {
-  if (!prisma) {
-    prisma = new PrismaClient();
-  }
-  return prisma;
+  return prisma ?? sharedPrisma;
 }
 
 function generateRawToken(): string {

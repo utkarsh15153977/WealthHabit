@@ -1,4 +1,5 @@
 import { Response } from 'express';
+import { env } from '../config/index.js';
 import { AuthenticatedRequest } from '../middleware/authMiddleware.js';
 import { RegisterInput, LoginInput } from '../schemas/authSchemas.js';
 import { authService } from '../services/authService.js';
@@ -113,7 +114,7 @@ export async function refresh(
   req: AuthenticatedRequest,
   res: Response
 ): Promise<void> {
-  const cookieName = process.env.COOKIE_NAME || 'wh_refresh_token';
+  const cookieName = env.COOKIE_NAME;
   const cookieToken = req.cookies?.[cookieName];
 
   if (!cookieToken) {
@@ -166,7 +167,7 @@ export async function logout(
   req: AuthenticatedRequest,
   res: Response
 ): Promise<void> {
-  const cookieName = process.env.COOKIE_NAME || 'wh_refresh_token';
+  const cookieName = env.COOKIE_NAME;
   const cookieToken = req.cookies?.[cookieName];
 
   if (cookieToken) {

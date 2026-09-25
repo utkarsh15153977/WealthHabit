@@ -62,7 +62,27 @@ npm run db:migrate
 npm run db:studio
 
 # Reset database (careful!)
-npx prisma migrate reset --workspace=server
+cd server && npx prisma migrate reset
+
+# Prepare the test database (creates <db>_test and applies migrations)
+npm run db:test:setup
+```
+
+### Testing
+
+Tests run against a dedicated test database so development data is never touched:
+
+- `server/vitest.config.ts` derives the test URL from `DATABASE_URL` by appending `_test`
+  (e.g. `wealthhabit` → `wealthhabit_test`). Set `TEST_DATABASE_URL` to override.
+- `server/tests/setup.ts` refuses to run unless the resolved database name ends with `_test`.
+- First-time setup: `npm run db:test:setup`, then `npm test`.
+
+```bash
+# Run all backend tests (root or server workspace)
+npm test
+
+# Run a single file
+npx vitest run tests/transaction.test.ts   # from server/
 ```
 
 ### Development Workflow
@@ -80,7 +100,7 @@ npx prisma migrate reset --workspace=server
 |---------|------|
 | Frontend (Vite) | 5173 |
 | Backend (Express) | 5000 |
-| PostgreSQL | 5432 |
+| PostgreSQL | 5433 (host) → 5432 (container) |
 
 ### Common Issues
 

@@ -12,12 +12,15 @@
     "client": "npm run dev --workspace=client",
     "server": "npm run dev --workspace=server",
     "build": "npm run build --workspaces",
+    "test": "npm run test --workspace=server",
     "lint": "npm run lint --workspaces",
     "format": "npm run format --workspaces",
     "db:up": "docker compose up -d",
     "db:down": "docker compose down",
     "db:generate": "npm run db:generate --workspace=server",
     "db:migrate": "npm run db:migrate --workspace=server",
+    "db:seed": "npm run db:seed --workspace=server",
+    "db:test:setup": "npm run db:test:setup --workspace=server",
     "db:studio": "npm run db:studio --workspace=server"
   },
   "devDependencies": {

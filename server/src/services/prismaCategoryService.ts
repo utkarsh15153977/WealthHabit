@@ -1,7 +1,6 @@
-import { PrismaClient, Prisma, Category, CategoryType } from '@prisma/client';
+import { Prisma, Category, CategoryType } from '@prisma/client';
 import { CreateCategoryInput, UpdateCategoryInput } from '../schemas/categorySchemas.js';
-
-const prisma = new PrismaClient();
+import { prisma } from '../config/prisma.js';
 
 export async function listUserCategories(
   userId: string,

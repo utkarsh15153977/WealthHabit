@@ -7,8 +7,9 @@ import {
   Plus,
   Search,
   Settings,
-  Target,
-  TrendingUp,
+    Target,
+    Repeat,
+    TrendingUp,
   Pencil,
   Trash2,
   ChevronLeft,
@@ -33,6 +34,7 @@ import {
 } from '../services/transactionApi';
 import type { Category } from '../types/category';
 import type { Transaction, TransactionType } from '../types/transaction';
+import { formatDate, toDateInputValue, todayForDateInput } from '../utils/date';
 
 const MONEY_PATTERN = /^\d+(\.\d{1,2})?$/;
 const MONEY_MAX = 9999999999999.99;
@@ -80,10 +82,6 @@ const EMPTY_FILTERS: Filters = {
 
 const DEFAULT_LIMIT = 20;
 
-function toDateInputValue(iso: string): string {
-  return iso.slice(0, 10);
-}
-
 function toFormValues(transaction: Transaction): TransactionForm {
   return {
     type: transaction.type,
@@ -101,7 +99,7 @@ function emptyFormValues(type: TransactionType = 'EXPENSE'): TransactionForm {
     type,
     amount: '',
     categoryId: '',
-    transactionDate: toDateInputValue(new Date().toISOString()),
+    transactionDate: todayForDateInput(),
     description: '',
     paymentMethod: '',
     notes: '',
@@ -112,16 +110,6 @@ function optionalText(value: string | undefined): string | null {
   if (value === undefined) return null;
   const trimmed = value.trim();
   return trimmed === '' ? null : trimmed;
-}
-
-function formatDate(iso: string): string {
-  const date = new Date(iso);
-  if (Number.isNaN(date.getTime())) return iso;
-  return date.toLocaleDateString(undefined, {
-    year: 'numeric',
-    month: 'short',
-    day: 'numeric',
-  });
 }
 
 function createCurrencyFormatter(currency: string | null): (amount: number) => string {
@@ -191,7 +179,8 @@ export function Transactions() {
   const navigation = [
     { name: 'Dashboard', href: '/dashboard', icon: LayoutDashboard, current: false },
     { name: 'Transactions', href: '/transactions', icon: CreditCard, current: true },
-    { name: 'Budgets', href: '#', icon: Target, current: false },
+    { name: 'Budgets', href: '/budgets', icon: Target, current: false },
+    { name: 'Recurring', href: '/recurring-transactions', icon: Repeat, current: false },
     { name: 'Analytics', href: '#', icon: TrendingUp, current: false },
     { name: 'Settings', href: '/profile', icon: Settings, current: false },
   ];
