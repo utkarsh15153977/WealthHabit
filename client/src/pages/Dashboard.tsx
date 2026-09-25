@@ -41,10 +41,12 @@ import { subscriptionApi } from '../services/subscriptionApi';
 import { notificationApi } from '../services/notificationApi';
 import { habitApi } from '../services/habitApi';
 import { challengeApi } from '../services/challengeApi';
+import { goalApi } from '../services/goalApi';
 import { formatDate, formatMonth } from '../utils/date';
 import type { DashboardSummaryData } from '../types/dashboard';
 import type { HabitWithProgress } from '../types/habit';
 import type { Challenge } from '../types/challenge';
+import type { Goal } from '../types/goal';
 import type { BudgetWithProgress } from '../types/budget';
 import type { RecurringTransaction } from '../types/recurringTransaction';
 import type { Bill } from '../types/bill';
@@ -129,6 +131,13 @@ export function Dashboard() {
   const [challengesJoinedCount, setChallengesJoinedCount] = useState(0);
   const [challengesLoading, setChallengesLoading] = useState(true);
   const [challengesError, setChallengesError] = useState<string | null>(null);
+  const [goals, setGoals] = useState<Goal[]>([]);
+  const [goalsActiveCount, setGoalsActiveCount] = useState(0);
+  const [goalsTotalTarget, setGoalsTotalTarget] = useState(0);
+  const [goalsTotalSaved, setGoalsTotalSaved] = useState(0);
+  const [goalsNearestTarget, setGoalsNearestTarget] = useState<string | null>(null);
+  const [goalsLoading, setGoalsLoading] = useState(true);
+  const [goalsError, setGoalsError] = useState<string | null>(null);
 
   const requestIdRef = useRef(0);
   const budgetsRequestRef = useRef(0);
@@ -138,6 +147,7 @@ export function Dashboard() {
   const notificationsRequestRef = useRef(0);
   const habitsRequestRef = useRef(0);
   const challengesRequestRef = useRef(0);
+  const goalsRequestRef = useRef(0);
   const hasLoadedRef = useRef(false);
 
   const fetchSummary = useCallback(async (requestedMonth: string, initial: boolean) => {
@@ -402,6 +412,42 @@ export function Dashboard() {
     void fetchChallenges();
   }, [fetchChallenges]);
 
+  const fetchGoals = useCallback(async () => {
+    const requestId = goalsRequestRef.current + 1;
+    goalsRequestRef.current = requestId;
+
+    setGoalsLoading(true);
+    setGoalsError(null);
+
+    try {
+      const result = await goalApi.getGoals({ status: 'ACTIVE', pageSize: 3 });
+
+      if (requestId !== goalsRequestRef.current) {
+        return;
+      }
+
+      setGoals(result.goals);
+      setGoalsActiveCount(result.total);
+      setGoalsTotalTarget(result.totalTargetAmount);
+      setGoalsTotalSaved(result.totalSavedAmount);
+      setGoalsNearestTarget(result.nearestTargetDate);
+    } catch (error) {
+      if (requestId !== goalsRequestRef.current) {
+        return;
+      }
+      setGoals([]);
+      setGoalsError(getApiErrorMessage(error));
+    } finally {
+      if (requestId === goalsRequestRef.current) {
+        setGoalsLoading(false);
+      }
+    }
+  }, []);
+
+  useEffect(() => {
+    void fetchGoals();
+  }, [fetchGoals]);
+
   const habitsCompleted = useMemo(
     () =>
       habitSummary.filter((habit) => habit.progress?.currentPeriod.completed === true)
@@ -444,6 +490,7 @@ export function Dashboard() {
     { name: 'Subscriptions', href: '/subscriptions', icon: RefreshCw, current: false },
     { name: 'Habits', href: '/habits', icon: ListChecks, current: false },
     { name: 'Challenges', href: '/challenges', icon: Trophy, current: false },
+    { name: 'Goals', href: '/goals', icon: PiggyBank, current: false },
     { name: 'Analytics', href: '#', icon: TrendingUp, current: false },
     { name: 'Settings', href: '/profile', icon: Settings, current: false },
   ];
@@ -1231,6 +1278,106 @@ export function Dashboard() {
                     className="inline-block mt-3 text-sm text-primary hover:underline"
                   >
                     View challenges →
+                  </Link>
+                </div>
+              )}
+            </div>
+          </div>
+
+          <div className="card">
+            <div className="card-header flex items-center justify-between">
+              <h2 className="heading-4">Savings Goals</h2>
+              <Link to="/goals" className="text-sm text-primary hover:underline">
+                View goals
+              </Link>
+            </div>
+            <div className="card-body">
+              {goalsLoading && (
+                <p className="text-sm text-text-muted text-center py-6">
+                  Loading goals...
+                </p>
+              )}
+
+              {!goalsLoading && goalsError && (
+                <span className="text-sm text-error block text-center py-6" role="alert">
+                  {goalsError}
+                </span>
+              )}
+
+              {!goalsLoading && !goalsError && goalsActiveCount === 0 && (
+                <div className="text-center py-6" data-testid="dashboard-goals-empty">
+                  <p className="text-sm text-text-muted">
+                    No active savings goals.
+                  </p>
+                  <Link
+                    to="/goals"
+                    className="inline-block mt-3 text-sm text-primary hover:underline"
+                  >
+                    Create one →
+                  </Link>
+                </div>
+              )}
+
+              {!goalsLoading && !goalsError && goalsActiveCount > 0 && (
+                <div className="py-2" data-testid="dashboard-goals-summary">
+                  <p className="text-sm text-text-muted mb-3">
+                    <span data-testid="dashboard-goals-active">
+                      {goalsActiveCount} active
+                    </span>
+                    {' · '}
+                    <span data-testid="dashboard-goals-saved">
+                      {formatAmount(goalsTotalSaved)} saved
+                    </span>
+                    {' · '}
+                    <span data-testid="dashboard-goals-target">
+                      {formatAmount(goalsTotalTarget)} targeted
+                    </span>
+                  </p>
+                  {goalsNearestTarget && (
+                    <p
+                      className="text-xs text-text-muted mb-3"
+                      data-testid="dashboard-goals-nearest"
+                    >
+                      Nearest target {formatDate(goalsNearestTarget)}
+                    </p>
+                  )}
+                  <ul className="space-y-3">
+                    {goals.map((goal) => {
+                      const pct = Math.min(Math.max(goal.progressPercent, 0), 100);
+                      const completed = goal.status === 'COMPLETED';
+                      return (
+                        <li
+                          key={goal.id}
+                          className="text-sm"
+                          data-testid={`dashboard-goal-${goal.name}`}
+                        >
+                          <div className="flex items-center justify-between gap-3">
+                            <span className="text-text truncate">{goal.name}</span>
+                            <span
+                              className={`whitespace-nowrap font-medium ${
+                                completed ? 'text-success' : 'text-text'
+                              }`}
+                            >
+                              {goal.progressPercent}%
+                            </span>
+                          </div>
+                          <div className="h-1.5 w-full rounded-full bg-border overflow-hidden mt-1.5">
+                            <div
+                              className={`h-full rounded-full ${
+                                completed ? 'bg-success' : 'bg-primary'
+                              }`}
+                              style={{ width: `${pct}%` }}
+                            />
+                          </div>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                  <Link
+                    to="/goals"
+                    className="inline-block mt-3 text-sm text-primary hover:underline"
+                  >
+                    View goals →
                   </Link>
                 </div>
               )}

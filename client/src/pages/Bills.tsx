@@ -5,6 +5,7 @@ import {
   LayoutDashboard,
   ListChecks,
   LogOut,
+  PiggyBank,
   Pencil,
   Plus,
   Receipt,
@@ -166,6 +167,7 @@ export function Bills() {
     { name: 'Subscriptions', href: '/subscriptions', icon: RefreshCw, current: false },
     { name: 'Habits', href: '/habits', icon: ListChecks, current: false },
     { name: 'Challenges', href: '/challenges', icon: Trophy, current: false },
+    { name: 'Goals', href: '/goals', icon: PiggyBank, current: false },
     { name: 'Analytics', href: '#', icon: TrendingUp, current: false },
     { name: 'Settings', href: '/profile', icon: Settings, current: false },
   ];

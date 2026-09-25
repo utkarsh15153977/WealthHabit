@@ -269,6 +269,55 @@ channel.
   Dashboard challenges card (`{n} active · {n} joined` plus progress of up to
   3 joined challenges, empty state links to `/challenges`).
 
+## Savings Goals
+
+- **Purpose**: users track progress toward a savings target by recording
+  contributions. Goals and contributions are informational only — they never
+  create or mutate transactions, budgets, bills, subscriptions, recurring
+  rules or habit completions, and there is no scheduler, XP, rewards or
+  notification anywhere in the flow (goal notifications are explicitly future
+  work).
+- **Data model**:
+  - `SavingsGoal` — name, description, `targetAmount` (Decimal > 0),
+    `targetDate`, category, priority, optional `monthlyContribution` hint,
+    stored status (`ACTIVE`/`PAUSED`/`CANCELLED`/`COMPLETED`). The legacy
+    `currentAmount` column exists in the schema but is **never read or
+    written** — no migration is required.
+  - `GoalContribution` — `amount` (Decimal > 0, ≤ 2dp), optional `note`,
+    `contributionDate` (defaults to today, UTC), FK `goalId`
+    (`onDelete: Cascade`).
+- **Derived state** (nothing extra persisted):
+  - `currentAmount` = `SUM(goal_contributions.amount)`, aggregated in memory
+    (list meta sums use one SQL `SUM` per page).
+  - `progressPercent` = current/target (Decimal, 2dp, capped at 100),
+    `remainingAmount` = max(target − current, 0), `contributionCount`.
+  - `overdue` = `targetDate < today (UTC)` while status is not
+    `COMPLETED`/`CANCELLED` — derived, never stored.
+  - Status `COMPLETED` is auto-synced (target met → `COMPLETED`, no longer
+    met → `ACTIVE`) after contribution create/update/delete and after goal
+    `PATCH`. `PAUSED`/`CANCELLED` are user intent and are never auto-
+    overwritten; `PATCH` accepts `ACTIVE`/`PAUSED`/`CANCELLED` only
+    (`COMPLETED` → 400 `VALIDATION_ERROR`).
+- **Concurrency**: contribution mutations and the status re-sync run inside a
+  `prisma.$transaction` holding `SELECT ... FOR UPDATE` on the goal row, then
+  re-read the goal under the lock and recompute progress/status. Reads
+  (list/progress) are lock-free.
+- **API / errors**: shared `amountSchema` validates amounts (`VALIDATION_ERROR`,
+  400); ownership is always scoped to the caller — missing or foreign
+  goals/contributions return 404 `GOAL_NOT_FOUND` / `CONTRIBUTION_NOT_FOUND`
+  (anti-enumeration). List: `page`/`pageSize` (≤50, default 20), `status`
+  filter, ordered by `targetDate asc`, flat response
+  `{goals, page, pageSize, total, activeCount, totalTargetAmount,
+  totalSavedAmount, nearestTargetDate}` (meta scoped to the filtered set).
+- **Performance**: list ≈ 5 parallel queries (page/total/activeCount/sums/
+  nearest date) — no N+1; detail ≈ 1 read + 1 aggregate.
+- **Frontend**: `/goals` page (summary header — active count, saved/target
+  totals, nearest target date — sections by status, goal cards with progress
+  bars and overdue badges, create/edit/delete modals, per-goal contributions
+  dialog with edit/delete), a nav item on every page, and a Dashboard savings
+  goals card (active/saved/target totals + up to 3 active goals, empty state
+  links to `/goals`).
+
 ## Design Principles
 
 - Separation of concerns

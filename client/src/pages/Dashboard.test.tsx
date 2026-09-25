@@ -10,9 +10,11 @@ import { subscriptionApi } from '../services/subscriptionApi';
 import { notificationApi } from '../services/notificationApi';
 import { habitApi } from '../services/habitApi';
 import { challengeApi } from '../services/challengeApi';
+import { goalApi } from '../services/goalApi';
 import type { DashboardSummaryData } from '../types/dashboard';
 import type { HabitWithProgress } from '../types/habit';
 import type { Challenge, ChallengeListResponse } from '../types/challenge';
+import type { Goal, GoalListResponse } from '../types/goal';
 
 vi.mock('../services/dashboardApi', () => ({
   getDashboardSummary: vi.fn(),
@@ -53,6 +55,10 @@ vi.mock('../services/challengeApi', () => ({
   challengeApi: { getChallenges: vi.fn() },
 }));
 
+vi.mock('../services/goalApi', () => ({
+  goalApi: { getGoals: vi.fn() },
+}));
+
 vi.mock('../context/useAuth', () => ({
   useAuth: () => ({
     user: { id: 'u1', firstName: 'Ada', lastName: 'Lovelace', email: 'ada@example.com' },
@@ -64,6 +70,47 @@ vi.mock('../context/useAuth', () => ({
 const mockedSummary = vi.mocked(getDashboardSummary);
 const mockedHabits = vi.mocked(habitApi.getHabits);
 const mockedChallenges = vi.mocked(challengeApi.getChallenges);
+const mockedGoals = vi.mocked(goalApi.getGoals);
+
+const emptyGoalList: GoalListResponse = {
+  goals: [],
+  page: 1,
+  pageSize: 3,
+  total: 0,
+  activeCount: 0,
+  totalTargetAmount: 0,
+  totalSavedAmount: 0,
+  nearestTargetDate: null,
+};
+
+function makeGoal(
+  id: string,
+  name: string,
+  progressPercent: number,
+  overrides: Partial<Goal> = {}
+): Goal {
+  const targetAmount = 1000;
+  const currentAmount = (targetAmount * progressPercent) / 100;
+  return {
+    id,
+    name,
+    description: null,
+    category: 'general',
+    priority: 'MEDIUM',
+    status: 'ACTIVE',
+    targetAmount,
+    currentAmount,
+    remainingAmount: targetAmount - currentAmount,
+    progressPercent,
+    contributionCount: 1,
+    targetDate: '2026-12-31T00:00:00.000Z',
+    overdue: false,
+    monthlyContribution: null,
+    createdAt: '2026-09-01T00:00:00.000Z',
+    updatedAt: '2026-09-01T00:00:00.000Z',
+    ...overrides,
+  };
+}
 
 const emptyChallengeList: ChallengeListResponse = {
   challenges: [],
@@ -220,6 +267,7 @@ describe('Dashboard habit summary card', () => {
       total: 0,
     });
     mockedChallenges.mockResolvedValue(emptyChallengeList);
+    mockedGoals.mockResolvedValue(emptyGoalList);
   });
 
   it('shows completed vs total active habits with per-habit state', async () => {
@@ -324,6 +372,7 @@ describe('Dashboard challenges card', () => {
       total: 0,
     });
     mockedChallenges.mockResolvedValue(emptyChallengeList);
+    mockedGoals.mockResolvedValue(emptyGoalList);
   });
 
   it('shows active and joined counts with progress for joined challenges', async () => {
@@ -381,5 +430,116 @@ describe('Dashboard challenges card', () => {
     const alert = await screen.findByRole('alert');
     expect(alert).toHaveTextContent('Challenges unavailable');
     expect(screen.queryByTestId('dashboard-challenge-summary')).toBeNull();
+  });
+});
+
+describe('Dashboard savings goals card', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockedSummary.mockResolvedValue(emptySummary);
+    vi.mocked(budgetApi.getBudgets).mockResolvedValue({
+      budgets: [],
+      page: 1,
+      pageSize: 20,
+      total: 0,
+    } as Awaited<ReturnType<typeof budgetApi.getBudgets>>);
+    vi.mocked(
+      recurringTransactionApi.getRecurringTransactions
+    ).mockResolvedValue({
+      recurringTransactions: [],
+      page: 1,
+      pageSize: 20,
+      total: 0,
+    } as Awaited<
+      ReturnType<typeof recurringTransactionApi.getRecurringTransactions>
+    >);
+    vi.mocked(billApi.getBills).mockResolvedValue({
+      bills: [],
+      page: 1,
+      pageSize: 20,
+      total: 0,
+    } as Awaited<ReturnType<typeof billApi.getBills>>);
+    vi.mocked(subscriptionApi.getSubscriptions).mockResolvedValue({
+      subscriptions: [],
+      page: 1,
+      pageSize: 20,
+      total: 0,
+    } as Awaited<ReturnType<typeof subscriptionApi.getSubscriptions>>);
+    vi.mocked(notificationApi.getUnreadCount).mockResolvedValue({
+      unreadCount: 0,
+    });
+    vi.mocked(notificationApi.generateNotifications).mockResolvedValue({
+      created: 0,
+    });
+    mockedHabits.mockResolvedValue({
+      habits: [],
+      page: 1,
+      pageSize: 50,
+      total: 0,
+    });
+    mockedChallenges.mockResolvedValue(emptyChallengeList);
+    mockedGoals.mockResolvedValue(emptyGoalList);
+  });
+
+  it('shows active count, totals and per-goal progress', async () => {
+    mockedGoals.mockResolvedValue({
+      goals: [
+        makeGoal('g1', 'Emergency fund', 40),
+        makeGoal('g2', 'Vacation', 75),
+      ],
+      page: 1,
+      pageSize: 3,
+      total: 3,
+      activeCount: 3,
+      totalTargetAmount: 3000,
+      totalSavedAmount: 1150,
+      nearestTargetDate: '2026-11-30T00:00:00.000Z',
+    });
+
+    renderDashboard();
+
+    const summary = await screen.findByTestId('dashboard-goals-summary');
+    expect(screen.getByTestId('dashboard-goals-active')).toHaveTextContent(
+      '3 active'
+    );
+    expect(screen.getByTestId('dashboard-goals-saved')).toHaveTextContent(
+      '$1,150'
+    );
+    expect(screen.getByTestId('dashboard-goals-target')).toHaveTextContent(
+      '$3,000'
+    );
+    expect(screen.getByTestId('dashboard-goals-nearest')).toHaveTextContent(
+      'Nearest target'
+    );
+    expect(
+      screen.getByTestId('dashboard-goal-Emergency fund')
+    ).toHaveTextContent('40%');
+    expect(screen.getByTestId('dashboard-goal-Vacation')).toHaveTextContent(
+      '75%'
+    );
+    expect(summary).toBeDefined();
+    expect(mockedGoals).toHaveBeenCalledWith({
+      status: 'ACTIVE',
+      pageSize: 3,
+    });
+  });
+
+  it('shows the empty state when there are no active goals', async () => {
+    renderDashboard();
+
+    expect(
+      await screen.findByText('No active savings goals.')
+    ).toBeDefined();
+    expect(screen.queryByTestId('dashboard-goals-summary')).toBeNull();
+  });
+
+  it('shows an inline error when goals fail to load', async () => {
+    mockedGoals.mockRejectedValue(new Error('Goals unavailable'));
+
+    renderDashboard();
+
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent('Goals unavailable');
+    expect(screen.queryByTestId('dashboard-goals-summary')).toBeNull();
   });
 });

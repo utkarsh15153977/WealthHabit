@@ -5,6 +5,7 @@ import {
   CreditCard,
   LayoutDashboard,
   ListChecks,
+  PiggyBank,
   Settings,
     Target,
     Receipt,
@@ -143,6 +144,7 @@ export function Profile() {
     { name: 'Subscriptions', href: '/subscriptions', icon: RefreshCw, current: false },
     { name: 'Habits', href: '/habits', icon: ListChecks, current: false },
     { name: 'Challenges', href: '/challenges', icon: Trophy, current: false },
+    { name: 'Goals', href: '/goals', icon: PiggyBank, current: false },
     { name: 'Analytics', href: '/dashboard', icon: TrendingUp, current: false },
     { name: 'Settings', href: '/profile', icon: Settings, current: true },
   ];

@@ -16,7 +16,7 @@ WealthHabit is a web application that helps users build better financial habits,
 - **Notifications** - Smart alerts and reminders
 - **Profile & Settings** - User preferences
 
-> ✅ Implemented: **Dashboard, Transactions, Budgets, Financial Habits, Challenges, Bills & Subscriptions, Recurring Transactions, Profile, and the in-app Notifications center.** The remaining features above are **planned** and not implemented yet.
+> ✅ Implemented: **Dashboard, Transactions, Budgets, Financial Habits, Challenges, Savings Goals, Bills & Subscriptions, Recurring Transactions, Profile, and the in-app Notifications center.** The remaining features above are **planned** and not implemented yet.
 
 ## Tech Stack
 
@@ -230,8 +230,8 @@ npm test
 
 **Core money-management features are implemented: authentication, categories,
 transactions, budgets, recurring transactions, bills & subscriptions, financial
-habits, financial challenges, dashboard analytics, and the in-app
-notifications center.**
+habits, financial challenges, savings goals, dashboard analytics, and the
+in-app notifications center.**
 
 Implemented:
 
@@ -241,9 +241,10 @@ Implemented:
 - ✅ Recurring transactions with on-demand occurrence generation
 - ✅ Bills & Subscriptions with due-state tracking and renewal advancement
 - ✅ Dashboard summary with budgets, recurring rules, upcoming obligations, a
-  financial-habits summary card (completed this period + per-habit streaks)
-  and a challenges card (active/joined counts + progress of up to 3 joined
-  challenges)
+  financial-habits summary card (completed this period + per-habit streaks),
+  a challenges card (active/joined counts + progress of up to 3 joined
+  challenges) and a savings goals card (active/saved/target totals + up to 3
+  active goals)
 - ✅ **Financial habits** — CRUD + activation, idempotent completion
   (`POST/DELETE /api/habits/:id/complete`), completion history, progress and
   **streaks** (`current`/`longest` + `completionRate` over elapsed periods,
@@ -279,6 +280,25 @@ Implemented:
   mutate transactions, budgets, bills, subscriptions, recurring rules or habit
   completions. Admin creation/management is API-only for now (no admin UI);
   tests promote users to `ADMIN` via controlled SQL setup.
-- ✅ Server test suite (576 tests) + client unit tests (47 tests)
+- ✅ **Savings goals** — goal CRUD with per-goal contributions
+  (`GET/POST /api/goals`, `GET/PATCH/DELETE /api/goals/:id`,
+  `GET /api/goals/:id/progress`, `GET/POST /api/goals/:id/contributions`,
+  `PATCH/DELETE /api/goals/:id/contributions/:contributionId`; list supports
+  `status` filter + pagination and returns list-level meta totals).
+  **`currentAmount` is derived on demand** from
+  `SUM(goal_contributions.amount)` — the legacy `savings_goals.currentAmount`
+  column is never read or written (no migration needed). Derived fields:
+  `progressPercent` (2dp, capped at 100), `remainingAmount`,
+  `contributionCount`, and `overdue` (target date passed while not
+  completed/cancelled). Status stores user intent (`ACTIVE`/`PAUSED`/
+  `CANCELLED`) while `COMPLETED` is auto-synced after contribution and target
+  changes — never auto-overwritten for paused/cancelled goals, and `PATCH`
+  cannot set `COMPLETED` directly (400). Contribution mutations and status
+  re-sync run in a transaction holding a goal row lock. Errors:
+  `GOAL_NOT_FOUND`/`CONTRIBUTION_NOT_FOUND` (404, anti-enumeration).
+  Contributions are informational only: they never create transactions or
+  notifications (goal notifications are future work), and there is no
+  scheduler.
+- ✅ Server test suite (640 tests) + client unit tests (72 tests)
 
-Next milestone: **Phase 5 planning** (Phases 1, 2, 3A–3C, 4A, 4B and 4C delivered)
+Next milestone: **Phase 5B planning** (Phases 1, 2, 3A–3C, 4A, 4B, 4C and 5A delivered)
