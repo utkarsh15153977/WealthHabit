@@ -45,6 +45,10 @@ beforeEach(async () => {
   await prisma.subscription.deleteMany();
   await prisma.habitCompletion.deleteMany();
   await prisma.financialHabit.deleteMany();
+  await prisma.challengeParticipantHabit.deleteMany();
+  await prisma.challengeParticipant.deleteMany();
+  await prisma.challengeHabitRequirement.deleteMany();
+  await prisma.challenge.deleteMany();
   await prisma.notification.deleteMany();
   await prisma.category.deleteMany();
   await prisma.session.deleteMany();

@@ -27,6 +27,7 @@ import {
   Percent,
   ReceiptText,
   Flame,
+  Trophy,
 } from 'lucide-react';
 import { useAuth } from '../context/useAuth';
 import { NotificationBell } from '../components/NotificationBell';
@@ -39,9 +40,11 @@ import { billApi } from '../services/billApi';
 import { subscriptionApi } from '../services/subscriptionApi';
 import { notificationApi } from '../services/notificationApi';
 import { habitApi } from '../services/habitApi';
+import { challengeApi } from '../services/challengeApi';
 import { formatDate, formatMonth } from '../utils/date';
 import type { DashboardSummaryData } from '../types/dashboard';
 import type { HabitWithProgress } from '../types/habit';
+import type { Challenge } from '../types/challenge';
 import type { BudgetWithProgress } from '../types/budget';
 import type { RecurringTransaction } from '../types/recurringTransaction';
 import type { Bill } from '../types/bill';
@@ -121,6 +124,11 @@ export function Dashboard() {
   const [habitTotal, setHabitTotal] = useState(0);
   const [habitsLoading, setHabitsLoading] = useState(true);
   const [habitsError, setHabitsError] = useState<string | null>(null);
+  const [challenges, setChallenges] = useState<Challenge[]>([]);
+  const [challengesActiveCount, setChallengesActiveCount] = useState(0);
+  const [challengesJoinedCount, setChallengesJoinedCount] = useState(0);
+  const [challengesLoading, setChallengesLoading] = useState(true);
+  const [challengesError, setChallengesError] = useState<string | null>(null);
 
   const requestIdRef = useRef(0);
   const budgetsRequestRef = useRef(0);
@@ -129,6 +137,7 @@ export function Dashboard() {
   const subscriptionsRequestRef = useRef(0);
   const notificationsRequestRef = useRef(0);
   const habitsRequestRef = useRef(0);
+  const challengesRequestRef = useRef(0);
   const hasLoadedRef = useRef(false);
 
   const fetchSummary = useCallback(async (requestedMonth: string, initial: boolean) => {
@@ -357,6 +366,42 @@ export function Dashboard() {
     void fetchHabits();
   }, [fetchHabits]);
 
+  const fetchChallenges = useCallback(async () => {
+    const requestId = challengesRequestRef.current + 1;
+    challengesRequestRef.current = requestId;
+
+    setChallengesLoading(true);
+    setChallengesError(null);
+
+    try {
+      const result = await challengeApi.getChallenges({
+        joined: true,
+        includeProgress: true,
+        pageSize: 3,
+      });
+      if (requestId !== challengesRequestRef.current) {
+        return;
+      }
+      setChallenges(result.challenges);
+      setChallengesActiveCount(result.activeCount);
+      setChallengesJoinedCount(result.joinedCount);
+    } catch (error) {
+      if (requestId !== challengesRequestRef.current) {
+        return;
+      }
+      setChallenges([]);
+      setChallengesError(getApiErrorMessage(error));
+    } finally {
+      if (requestId === challengesRequestRef.current) {
+        setChallengesLoading(false);
+      }
+    }
+  }, []);
+
+  useEffect(() => {
+    void fetchChallenges();
+  }, [fetchChallenges]);
+
   const habitsCompleted = useMemo(
     () =>
       habitSummary.filter((habit) => habit.progress?.currentPeriod.completed === true)
@@ -398,6 +443,7 @@ export function Dashboard() {
     { name: 'Bills', href: '/bills', icon: Receipt, current: false },
     { name: 'Subscriptions', href: '/subscriptions', icon: RefreshCw, current: false },
     { name: 'Habits', href: '/habits', icon: ListChecks, current: false },
+    { name: 'Challenges', href: '/challenges', icon: Trophy, current: false },
     { name: 'Analytics', href: '#', icon: TrendingUp, current: false },
     { name: 'Settings', href: '/profile', icon: Settings, current: false },
   ];
@@ -1094,6 +1140,97 @@ export function Dashboard() {
                     className="inline-block mt-3 text-sm text-primary hover:underline"
                   >
                     View habits →
+                  </Link>
+                </div>
+              )}
+            </div>
+          </div>
+
+          <div className="card">
+            <div className="card-header flex items-center justify-between">
+              <h2 className="heading-4">Challenges</h2>
+              <Link to="/challenges" className="text-sm text-primary hover:underline">
+                Explore challenges
+              </Link>
+            </div>
+            <div className="card-body">
+              {challengesLoading && (
+                <p className="text-sm text-text-muted text-center py-6">
+                  Loading challenges...
+                </p>
+              )}
+
+              {!challengesLoading && challengesError && (
+                <span className="text-sm text-error block text-center py-6" role="alert">
+                  {challengesError}
+                </span>
+              )}
+
+              {!challengesLoading &&
+                !challengesError &&
+                challengesJoinedCount === 0 && (
+                  <div className="text-center py-6" data-testid="dashboard-challenges-empty">
+                    <p className="text-sm text-text-muted">
+                      You are not participating in any challenges.
+                    </p>
+                    <Link
+                      to="/challenges"
+                      className="inline-block mt-3 text-sm text-primary hover:underline"
+                    >
+                      Explore challenges →
+                    </Link>
+                  </div>
+                )}
+
+              {!challengesLoading && !challengesError && challengesJoinedCount > 0 && (
+                <div className="py-2" data-testid="dashboard-challenge-summary">
+                  <p className="text-sm text-text-muted mb-3">
+                    <span data-testid="dashboard-challenges-active">
+                      {challengesActiveCount} active
+                    </span>
+                    {' · '}
+                    <span data-testid="dashboard-challenges-joined">
+                      {challengesJoinedCount} joined
+                    </span>
+                  </p>
+                  <ul className="space-y-3">
+                    {challenges.slice(0, 3).map((challenge) => {
+                      const rate = challenge.participation.progress?.completionRate ?? 0;
+                      const completed =
+                        challenge.participation.progress?.completed === true;
+                      return (
+                        <li
+                          key={challenge.id}
+                          className="text-sm"
+                          data-testid={`dashboard-challenge-${challenge.name}`}
+                        >
+                          <div className="flex items-center justify-between gap-3">
+                            <span className="text-text truncate">{challenge.name}</span>
+                            <span
+                              className={`whitespace-nowrap font-medium ${
+                                completed ? 'text-success' : 'text-text'
+                              }`}
+                            >
+                              {completed ? 'Completed' : `${rate}%`}
+                            </span>
+                          </div>
+                          <div className="h-1.5 w-full rounded-full bg-border overflow-hidden mt-1.5">
+                            <div
+                              className={`h-full rounded-full ${
+                                completed ? 'bg-success' : 'bg-primary'
+                              }`}
+                              style={{ width: `${rate}%` }}
+                            />
+                          </div>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                  <Link
+                    to="/challenges"
+                    className="inline-block mt-3 text-sm text-primary hover:underline"
+                  >
+                    View challenges →
                   </Link>
                 </div>
               )}

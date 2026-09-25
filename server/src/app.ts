@@ -18,6 +18,7 @@ import billRoutes from './routes/billRoutes.js';
 import subscriptionRoutes from './routes/subscriptionRoutes.js';
 import notificationRoutes from './routes/notificationRoutes.js';
 import habitRoutes from './routes/habitRoutes.js';
+import challengeRoutes from './routes/challengeRoutes.js';
 import dashboardRoutes from './routes/dashboardRoutes.js';
 
 const app = express();
@@ -50,6 +51,7 @@ app.use('/api/bills', billRoutes);
 app.use('/api/subscriptions', subscriptionRoutes);
 app.use('/api/notifications', notificationRoutes);
 app.use('/api/habits', habitRoutes);
+app.use('/api/challenges', challengeRoutes);
 app.use('/api/dashboard', dashboardRoutes);
 
 app.use(notFoundHandler);

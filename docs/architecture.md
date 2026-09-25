@@ -213,6 +213,62 @@ channel.
   `Sep 25`, `Week of Sep 21`, `September 2026`) fed by the history endpoint.
   The Dashboard habit rows show `{n} streak` for up to 4 habits.
 
+## Financial Challenges
+
+- **Purpose**: time-boxed, admin-created challenges that motivate users to
+  complete their financial habits. A challenge is informational by design —
+  joining, mapping, progress and leaving have **zero financial side effects**
+  (no transactions, budgets, bills, subscriptions, recurring rules or habit
+  completions are created or mutated) and there is no XP, points redemption,
+  leaderboard, badge, reward, notification or scheduler anywhere in the flow.
+- **Data model** (`ChallengeType = HABIT_COMPLETION`):
+  - `Challenge` — name, description, category, difficulty, points (display
+    only), required `startDate`/`endDate`, `isActive`, `type`, and 1–10
+    `ChallengeHabitRequirement` rows (name, optional description, reused
+    `Frequency` enum, `target` completions per period, optional unit).
+    Requirement metadata is immutable after create (recreate the challenge to
+    change it).
+  - `ChallengeParticipant` — compound unique `(challengeId, userId)` gives
+    DB-level race safety; legacy `progress`/`status`/`completedAt` columns
+    exist from the original schema but are **never read or written** by 4C.
+  - `ChallengeParticipantHabit` — maps a requirement to one of the
+    participant's habits (unique `(participantId, requirementId)`); mapping to
+    the same habit is idempotent, a different habit replaces the mapping.
+- **Derived state** (nothing persisted):
+  - Challenge `status`: `UPCOMING` (`today < start`), `ACTIVE`
+    (`start ≤ today ≤ end && isActive`), `ENDED` otherwise (including
+    deactivated challenges).
+  - Participant `status`: `NOT_JOINED` / `JOINED` / `COMPLETED`, plus
+    `progress` — computed by `server/src/utils/challengeProgress.ts` (pure,
+    DB-free): eligibility window = intersection of challenge window, habit
+    window and today (UTC days); completions are grouped per challenge period
+    using the same anchors as habit streaks; a period counts when completions
+    reach the requirement's `target`; `completionRate` = completed/eligible
+    (2dp, capped at 100). Unmapped requirements contribute eligible periods
+    but zero completions.
+- **Join window / errors**: joins are only allowed inside the date window and
+  while `isActive` — `CHALLENGE_NOT_STARTED` (400), `CHALLENGE_ENDED` (400),
+  `CHALLENGE_INACTIVE` (400). Join is idempotent (`201` first time,
+  `200 alreadyJoined` after, including on unique-key races); leave always
+  returns `200` with `wasJoined`. Mapping validates ownership
+  (`CHALLENGE_HABIT_NOT_FOUND`, 404, anti-enumeration), active habit,
+  frequency and date overlap (`CHALLENGE_HABIT_MISMATCH`, 400), and requires
+  membership (`CHALLENGE_NOT_JOINED`, 400).
+- **Authorization**: `requireAdmin` on `POST`/`PATCH`/`DELETE
+  /api/challenges`; list/get/join/leave/progress/mapping only need an access
+  token. Habit mapping is always scoped to the caller's own habits (IDOR
+  tested). There is no admin UI yet — admin creation is API-only; tests and
+  E2E promote users via controlled SQL setup.
+- **Performance**: list uses a 4-query transaction (page/total/activeCount/
+  joinedCount) plus batched mappings/habits/completions (`IN` queries) — no
+  N+1; detail/progress ≈ 5 queries.
+- **Frontend**: `/challenges` page (Active/Upcoming/Ended sections, join with
+  in-flight disable, leave via confirmation dialog, per-requirement habit
+  select limited to matching-frequency habits, progress bar with
+  `{completed} / {eligible} periods`), a nav item on every page, and a
+  Dashboard challenges card (`{n} active · {n} joined` plus progress of up to
+  3 joined challenges, empty state links to `/challenges`).
+
 ## Design Principles
 
 - Separation of concerns

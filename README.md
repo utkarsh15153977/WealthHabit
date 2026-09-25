@@ -8,7 +8,7 @@ WealthHabit is a web application that helps users build better financial habits,
 - **Transactions** - Income and expense tracking
 - **Budgets** - Category-based budgeting
 - **Financial Habits** - Habit building for financial wellness
-- **Challenges** - Gamified financial challenges
+- **Challenges** - Gamified financial challenges (admin-created, habit-based)
 - **Savings Goals** - Goal-based savings tracking
 - **Wealth Analytics** - Net worth, investments, assets/liabilities
 - **Bills & Subscriptions** - Recurring payment management
@@ -16,7 +16,7 @@ WealthHabit is a web application that helps users build better financial habits,
 - **Notifications** - Smart alerts and reminders
 - **Profile & Settings** - User preferences
 
-> ✅ Implemented: **Dashboard, Transactions, Budgets, Financial Habits, Bills & Subscriptions, Recurring Transactions, Profile, and the in-app Notifications center.** The remaining features above are **planned** and not implemented yet.
+> ✅ Implemented: **Dashboard, Transactions, Budgets, Financial Habits, Challenges, Bills & Subscriptions, Recurring Transactions, Profile, and the in-app Notifications center.** The remaining features above are **planned** and not implemented yet.
 
 ## Tech Stack
 
@@ -230,7 +230,8 @@ npm test
 
 **Core money-management features are implemented: authentication, categories,
 transactions, budgets, recurring transactions, bills & subscriptions, financial
-habits, dashboard analytics, and the in-app notifications center.**
+habits, financial challenges, dashboard analytics, and the in-app
+notifications center.**
 
 Implemented:
 
@@ -239,8 +240,10 @@ Implemented:
 - ✅ Monthly budgets with Decimal-based progress and thresholds
 - ✅ Recurring transactions with on-demand occurrence generation
 - ✅ Bills & Subscriptions with due-state tracking and renewal advancement
-- ✅ Dashboard summary with budgets, recurring rules, upcoming obligations and
-  a financial-habits summary card (completed this period + per-habit streaks)
+- ✅ Dashboard summary with budgets, recurring rules, upcoming obligations, a
+  financial-habits summary card (completed this period + per-habit streaks)
+  and a challenges card (active/joined counts + progress of up to 3 joined
+  challenges)
 - ✅ **Financial habits** — CRUD + activation, idempotent completion
   (`POST/DELETE /api/habits/:id/complete`), completion history, progress and
   **streaks** (`current`/`longest` + `completionRate` over elapsed periods,
@@ -259,6 +262,23 @@ Implemented:
   (`POST /api/notifications/generate`), deduplicated per user, and never
   create or modify financial records. No scheduler, queue, email, or push
   channel is involved.
-- ✅ Server test suite (501 tests) + client unit tests (36 tests)
+- ✅ **Financial challenges** — admin-managed challenges
+  (`POST/PATCH/DELETE /api/challenges` require the `ADMIN` role; list/get,
+  join/leave/progress are open to signed-in users) with **habit requirements**
+  (frequency + per-period target, 1–10 per challenge). Participants map each
+  requirement to one of their own habits (ownership, active, frequency and
+  date-overlap validated; same habit is idempotent, a different habit
+  replaces the mapping). **Progress is derived on demand** from
+  `HabitCompletion` over the challenge window (`GET /api/challenges/:id/progress`)
+  and never persisted — challenge status (`UPCOMING`/`ACTIVE`/`ENDED`) and
+  participant status (`NOT_JOINED`/`JOINED`/`COMPLETED`) are derived too; the
+  legacy `progress`/`status`/`completedAt` participant columns are unused.
+  Joining is idempotent and race-safe (compound unique key → `201` first join,
+  `200 alreadyJoined` after). Challenges are informational only: no XP,
+  leaderboards, rewards, notifications or scheduler, and they never create or
+  mutate transactions, budgets, bills, subscriptions, recurring rules or habit
+  completions. Admin creation/management is API-only for now (no admin UI);
+  tests promote users to `ADMIN` via controlled SQL setup.
+- ✅ Server test suite (576 tests) + client unit tests (47 tests)
 
-Next milestone: **Phase 5 planning** (Phases 1, 2, 3A–3C, 4A and 4B delivered)
+Next milestone: **Phase 5 planning** (Phases 1, 2, 3A–3C, 4A, 4B and 4C delivered)

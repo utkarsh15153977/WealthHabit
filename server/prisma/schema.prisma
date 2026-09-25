@@ -68,6 +68,10 @@ enum ChallengeDifficulty {
   HARD
 }
 
+enum ChallengeType {
+  HABIT_COMPLETION
+}
+
 enum ChallengeStatus {
   NOT_STARTED
   IN_PROGRESS
@@ -302,6 +306,7 @@ model FinancialHabit {
 
   user        User              @relation(fields: [userId], references: [id], onDelete: Cascade)
   completions HabitCompletion[]
+  challengeMappings ChallengeParticipantHabit[]
 
   @@index([userId])
   @@index([isActive])
@@ -464,16 +469,35 @@ model Challenge {
   category    String
   difficulty  ChallengeDifficulty
   points      Int
-  startDate   DateTime?
-  endDate     DateTime?
+  type        ChallengeType       @default(HABIT_COMPLETION)
+  startDate   DateTime
+  endDate     DateTime
   isActive    Boolean             @default(true)
   createdAt   DateTime            @default(now())
   updatedAt   DateTime            @updatedAt
 
   participants ChallengeParticipant[]
+  requirements ChallengeHabitRequirement[]
 
   @@index([isActive])
   @@map("challenges")
+}
+
+model ChallengeHabitRequirement {
+  id          String   @id @default(cuid())
+  challengeId String
+  name        String
+  description String?
+  frequency   Frequency
+  target      Int      @default(1)
+  unit        String?
+  createdAt   DateTime @default(now())
+
+  challenge Challenge @relation(fields: [challengeId], references: [id], onDelete: Cascade)
+  mappings  ChallengeParticipantHabit[]
+
+  @@index([challengeId])
+  @@map("challenge_habit_requirements")
 }
 
 model ChallengeParticipant {
@@ -485,13 +509,30 @@ model ChallengeParticipant {
   joinedAt    DateTime        @default(now())
   completedAt DateTime?
 
-  challenge Challenge @relation(fields: [challengeId], references: [id], onDelete: Cascade)
-  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  challenge Challenge                @relation(fields: [challengeId], references: [id], onDelete: Cascade)
+  user      User                     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  mappings  ChallengeParticipantHabit[]
 
   @@unique([challengeId, userId])
   @@index([challengeId])
   @@index([userId])
   @@map("challenge_participants")
+}
+
+model ChallengeParticipantHabit {
+  id            String   @id @default(cuid())
+  participantId String
+  requirementId String
+  habitId       String
+  createdAt     DateTime @default(now())
+
+  participant ChallengeParticipant      @relation(fields: [participantId], references: [id], onDelete: Cascade)
+  requirement ChallengeHabitRequirement @relation(fields: [requirementId], references: [id], onDelete: Cascade)
+  habit       FinancialHabit            @relation(fields: [habitId], references: [id], onDelete: Cascade)
+
+  @@unique([participantId, requirementId])
+  @@index([habitId])
+  @@map("challenge_participant_habits")
 }
 
 model Notification {

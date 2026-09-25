@@ -20,6 +20,7 @@ import {
   TrendingUp,
   Trash2,
   X,
+  Trophy,
 } from 'lucide-react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
@@ -428,6 +429,7 @@ export function Habits() {
     { name: 'Bills', href: '/bills', icon: Receipt, current: false },
     { name: 'Subscriptions', href: '/subscriptions', icon: RefreshCw, current: false },
     { name: 'Habits', href: '/habits', icon: ListChecks, current: true },
+    { name: 'Challenges', href: '/challenges', icon: Trophy, current: false },
     { name: 'Analytics', href: '#', icon: TrendingUp, current: false },
     { name: 'Settings', href: '/profile', icon: Settings, current: false },
   ];
