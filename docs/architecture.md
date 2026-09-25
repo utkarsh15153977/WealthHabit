@@ -73,6 +73,41 @@ WealthHabit follows a monorepo architecture with clear separation between fronte
 7. **Prisma** executes database queries
 8. Response flows back through the layers
 
+## Notifications (In-App)
+
+Notifications are **informational only**: generation never creates or mutates
+transactions, budgets, bills, subscriptions, or recurring rules, and never
+advances due dates or statuses.
+
+- **Model**: `notifications` table with a `NotificationType` enum
+  (`BUDGET_THRESHOLD`, `BILL_UPCOMING`, `BILL_OVERDUE`,
+  `SUBSCRIPTION_UPCOMING`, `RECURRING_TRANSACTION_UPCOMING`), a nullable
+  `dedupKey` (unique per user), and optional `metadata` JSON.
+- **Generation is on demand only** — `POST /api/notifications/generate` is
+  called by the notification center page, the header bell, and the dashboard
+  card. There is no scheduler, cron job, queue, worker, WebSocket, or
+  email/push channel, and nothing polls in the background.
+- **Endpoints** (all authenticated, user-scoped):
+  - `GET /api/notifications` — paginated list (`page`, `pageSize` ≤ 50,
+    `unreadOnly`), returns `{ items, page, pageSize, total, unreadCount }`
+  - `GET /api/notifications/unread-count`
+  - `POST /api/notifications/generate`
+  - `PATCH /api/notifications/:id/read` (idempotent, sets `readAt`)
+  - `PATCH /api/notifications/read-all`
+  - `DELETE /api/notifications/:id`
+- **Deduplication**: deterministic keys enforced by
+  `@@unique([userId, dedupKey])` + `createMany({ skipDuplicates: true })` —
+  e.g. `budget:{id}:{month}:pct80`, `bill:{id}:{dueDate}:upcoming|overdue`,
+  `subscription:{id}:{renewalDate}:upcoming`,
+  `recurring:{id}:{occurrenceDate}:upcoming`.
+- **Rules (UTC day math)**: current-month budgets at ≥80%/≥100% expense
+  progress; bills due within 3 days (upcoming) or past due with
+  `PENDING`/`OVERDUE` status; `ACTIVE` subscriptions renewing within 3 days;
+  `isActive` recurring transactions occurring within 1 day.
+- **Frontend**: `NotificationBell` renders in every page header
+  (generate → unread count, badge hidden at zero) and links to
+  `/notifications`; the dashboard shows a compact unread-count card.
+
 ## Design Principles
 
 - Separation of concerns

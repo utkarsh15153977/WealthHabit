@@ -24,6 +24,7 @@ const CODE_MESSAGES: Record<string, string> = {
   CATEGORY_NOT_FOUND: 'Category not found or unavailable',
   CATEGORY_IN_USE: 'This category is used by transactions and cannot be deleted',
   CATEGORY_ALREADY_EXISTS: 'A category with this name already exists',
+  NOTIFICATION_NOT_FOUND: 'Notification not found',
 };
 
 const STATUS_MESSAGES: Record<number, string> = {

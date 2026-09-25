@@ -27,6 +27,7 @@ import {
   ReceiptText,
 } from 'lucide-react';
 import { useAuth } from '../context/useAuth';
+import { NotificationBell } from '../components/NotificationBell';
 import { Loading } from '../components/Loading';
 import { getApiErrorMessage } from '../services/error';
 import { getDashboardSummary } from '../services/dashboardApi';
@@ -34,6 +35,7 @@ import { budgetApi } from '../services/budgetApi';
 import { recurringTransactionApi } from '../services/recurringTransactionApi';
 import { billApi } from '../services/billApi';
 import { subscriptionApi } from '../services/subscriptionApi';
+import { notificationApi } from '../services/notificationApi';
 import { formatDate, formatMonth } from '../utils/date';
 import type { DashboardSummaryData } from '../types/dashboard';
 import type { BudgetWithProgress } from '../types/budget';
@@ -108,12 +110,16 @@ export function Dashboard() {
   const [subscriptions, setSubscriptions] = useState<Subscription[]>([]);
   const [subscriptionsLoading, setSubscriptionsLoading] = useState(true);
   const [subscriptionsError, setSubscriptionsError] = useState<string | null>(null);
+  const [unreadNotifications, setUnreadNotifications] = useState(0);
+  const [notificationsLoading, setNotificationsLoading] = useState(true);
+  const [notificationsError, setNotificationsError] = useState<string | null>(null);
 
   const requestIdRef = useRef(0);
   const budgetsRequestRef = useRef(0);
   const recurringRequestRef = useRef(0);
   const billsRequestRef = useRef(0);
   const subscriptionsRequestRef = useRef(0);
+  const notificationsRequestRef = useRef(0);
   const hasLoadedRef = useRef(false);
 
   const fetchSummary = useCallback(async (requestedMonth: string, initial: boolean) => {
@@ -276,6 +282,36 @@ export function Dashboard() {
     void fetchSubscriptions();
   }, [fetchBills, fetchSubscriptions]);
 
+  const fetchNotificationCount = useCallback(async () => {
+    const requestId = notificationsRequestRef.current + 1;
+    notificationsRequestRef.current = requestId;
+
+    setNotificationsLoading(true);
+    setNotificationsError(null);
+
+    try {
+      await notificationApi.generateNotifications();
+      const result = await notificationApi.getUnreadCount();
+      if (requestId !== notificationsRequestRef.current) {
+        return;
+      }
+      setUnreadNotifications(result.unreadCount);
+    } catch (error) {
+      if (requestId !== notificationsRequestRef.current) {
+        return;
+      }
+      setNotificationsError(getApiErrorMessage(error));
+    } finally {
+      if (requestId === notificationsRequestRef.current) {
+        setNotificationsLoading(false);
+      }
+    }
+  }, []);
+
+  useEffect(() => {
+    void fetchNotificationCount();
+  }, [fetchNotificationCount]);
+
   const upcomingBills = useMemo(() => {
     return bills
       .filter((bill) => bill.status !== 'CANCELLED')
@@ -366,6 +402,7 @@ export function Dashboard() {
           <span className="hidden sm:block text-sm text-text-muted">
             {user ? `${user.firstName} ${user.lastName}` : ''}
           </span>
+          <NotificationBell />
           <button
             type="button"
             className="btn-ghost p-2"
@@ -783,7 +820,7 @@ export function Dashboard() {
           </div>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mt-6">
+        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6 mt-6">
           <div className="card">
             <div className="card-header flex items-center justify-between">
               <h2 className="heading-4">Upcoming Bills</h2>
@@ -884,10 +921,47 @@ export function Dashboard() {
                         <span className="text-sm font-medium whitespace-nowrap text-error">
                           {formatAmount(subscription.amount)}
                         </span>
-                      </li>
-                    ))}
-                  </ul>
-                )}
+                  </li>
+                ))}
+              </ul>
+            )}
+            </div>
+          </div>
+
+          <div className="card">
+            <div className="card-header flex items-center justify-between">
+              <h2 className="heading-4">Notifications</h2>
+              <Link to="/notifications" className="text-sm text-primary hover:underline">
+                View notifications
+              </Link>
+            </div>
+            <div className="card-body">
+              {notificationsLoading && (
+                <p className="text-sm text-text-muted text-center py-6">
+                  Loading notifications...
+                </p>
+              )}
+
+              {!notificationsLoading && notificationsError && (
+                <span className="text-sm text-error block text-center py-6" role="alert">
+                  {notificationsError}
+                </span>
+              )}
+
+              {!notificationsLoading && !notificationsError && (
+                <div className="text-center py-6" data-testid="dashboard-unread-count">
+                  <p className="text-3xl font-semibold text-text">{unreadNotifications}</p>
+                  <p className="text-sm text-text-muted mt-1">
+                    {unreadNotifications === 1 ? 'unread notification' : 'unread notifications'}
+                  </p>
+                  <Link
+                    to="/notifications"
+                    className="inline-block mt-3 text-sm text-primary hover:underline"
+                  >
+                    View notifications →
+                  </Link>
+                </div>
+              )}
             </div>
           </div>
         </div>

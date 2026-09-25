@@ -43,6 +43,7 @@ beforeEach(async () => {
   await prisma.recurringTransaction.deleteMany();
   await prisma.bill.deleteMany();
   await prisma.subscription.deleteMany();
+  await prisma.notification.deleteMany();
   await prisma.category.deleteMany();
   await prisma.session.deleteMany();
   await prisma.authToken.deleteMany();

@@ -80,6 +80,14 @@ enum AuthTokenType {
   PASSWORD_RESET
 }
 
+enum NotificationType {
+  BUDGET_THRESHOLD
+  BILL_UPCOMING
+  BILL_OVERDUE
+  SUBSCRIPTION_UPCOMING
+  RECURRING_TRANSACTION_UPCOMING
+}
+
 model User {
   id              String        @id @default(cuid())
   email           String        @unique
@@ -483,20 +491,22 @@ model ChallengeParticipant {
 }
 
 model Notification {
-  id        String    @id @default(cuid())
+  id        String           @id @default(cuid())
   userId    String
-  type      String
+  type      NotificationType
   title     String
   message   String
-  isRead    Boolean   @default(false)
-  createdAt DateTime  @default(now())
+  isRead    Boolean          @default(false)
+  createdAt DateTime         @default(now())
   readAt    DateTime?
+  dedupKey  String?
+  metadata  Json?
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  @@index([userId])
-  @@index([isRead])
-  @@index([createdAt])
+  @@unique([userId, dedupKey])
+  @@index([userId, createdAt])
+  @@index([userId, isRead])
   @@map("notifications")
 }
 

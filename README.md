@@ -16,7 +16,7 @@ WealthHabit is a web application that helps users build better financial habits,
 - **Notifications** - Smart alerts and reminders
 - **Profile & Settings** - User preferences
 
-> ⚠️ These features are **planned** and not implemented yet.
+> ✅ Implemented: **Dashboard, Transactions, Budgets, Bills & Subscriptions, Recurring Transactions, Profile, and the in-app Notifications center.** The remaining features above are **planned** and not implemented yet.
 
 ## Tech Stack
 
@@ -200,9 +200,12 @@ WealthHabit/
 | `npm run db:seed` | Seed default income/expense categories |
 | `npm run db:test:setup` | Create/prepare the dedicated test database |
 | `npm run db:studio` | Open Prisma Studio |
-| `npm test` | Run backend tests (against the test database) |
+| `npm test` | Run all tests (client unit tests + backend tests against the test database) |
 
 ## Testing
+
+`npm test` runs the **client unit tests** (Vitest + Testing Library, jsdom) and the
+**backend tests** (Vitest + Supertest).
 
 Backend tests run against a **dedicated test database** and never touch development data.
 
@@ -225,20 +228,24 @@ npm test
 
 ## Current Status
 
-**Project foundation completed. Business features are not implemented yet.**
+**Core money-management features are implemented: authentication, categories,
+transactions, budgets, recurring transactions, bills & subscriptions, dashboard
+analytics, and the in-app notifications center.**
 
 Implemented:
-- ✅ Monorepo structure with client/server separation
-- ✅ React + Vite + TypeScript frontend setup
-- ✅ Tailwind CSS with design tokens
-- ✅ React Router with placeholder routes
-- ✅ Express + TypeScript backend setup
-- ✅ Prisma ORM with PostgreSQL
-- ✅ Docker Compose for PostgreSQL
-- ✅ Health check endpoint
-- ✅ Centralized error handling
-- ✅ CORS configuration
-- ✅ ESLint + Prettier configuration
-- ✅ TypeScript strict mode
 
-Next milestone: **Database schema + authentication architecture**
+- ✅ Auth (register/login/refresh/logout, sessions, profiles)
+- ✅ Categories and transaction tracking with filtering/pagination
+- ✅ Monthly budgets with Decimal-based progress and thresholds
+- ✅ Recurring transactions with on-demand occurrence generation
+- ✅ Bills & Subscriptions with due-state tracking and renewal advancement
+- ✅ Dashboard summary with budgets, recurring rules and upcoming obligations
+- ✅ **In-app notifications** — budget thresholds (80%/100%), bill reminders
+  (≤3 days) and overdue alerts, subscription renewal reminders (≤3 days), and
+  recurring transaction due reminders (≤1 day). Notifications are generated
+  on demand only (`POST /api/notifications/generate`), deduplicated per user,
+  and never create or modify financial records. No scheduler, queue, email,
+  or push channel is involved.
+- ✅ Server test suite (372 tests) + client unit tests (13 tests)
+
+Next milestone: **Phase 4 planning**

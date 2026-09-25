@@ -24,6 +24,7 @@ import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import { useAuth } from '../context/useAuth';
+import { NotificationBell } from '../components/NotificationBell';
 import { Loading } from '../components/Loading';
 import { getApiErrorMessage } from '../services/error';
 import { getMyProfile } from '../services/userApi';
@@ -450,6 +451,7 @@ export function Transactions() {
             <span className="hidden sm:block text-sm text-text-muted">
               {user ? `${user.firstName} ${user.lastName}` : ''}
             </span>
+            <NotificationBell />
             <button
               type="button"
               className="btn-ghost p-2"

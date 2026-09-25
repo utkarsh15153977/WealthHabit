@@ -16,6 +16,7 @@ import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import { useAuth } from '../context/useAuth';
+import { NotificationBell } from '../components/NotificationBell';
 import { getMyProfile, updateMyProfile } from '../services/userApi';
 import { getApiErrorMessage } from '../services/error';
 import { Loading } from '../components/Loading';
@@ -178,6 +179,7 @@ export function Profile() {
             <span className="hidden sm:block text-sm text-text-muted">
               {user ? `${user.firstName} ${user.lastName}` : ''}
             </span>
+            <NotificationBell />
           </div>
         </div>
       </header>
