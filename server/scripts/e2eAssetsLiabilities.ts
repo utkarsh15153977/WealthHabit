@@ -212,8 +212,8 @@ async function main(): Promise<void> {
   );
   const summaryKeys = Object.keys(summary.body.data ?? {}).sort().join(',');
   check(
-    'exposes only the four documented fields (no net worth)',
-    summaryKeys === 'assetCount,liabilityCount,totalAssets,totalLiabilities',
+    'exposes the documented fields plus derived net worth',
+    summaryKeys === 'assetCount,liabilityCount,netWorth,totalAssets,totalLiabilities',
     summaryKeys
   );
 

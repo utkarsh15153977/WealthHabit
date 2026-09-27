@@ -86,6 +86,7 @@ function makeSummary(
   return {
     totalAssets: 0,
     totalLiabilities: 0,
+    netWorth: 0,
     assetCount: 0,
     liabilityCount: 0,
     ...overrides,
@@ -217,7 +218,8 @@ describe('Assets and Liabilities page', () => {
       expect(screen.getByTestId('summary-liability-count')).toHaveTextContent(
         '3 liabilities'
       );
-      expect(screen.queryByText(/net worth/i)).toBeNull();
+      const summary = screen.getByTestId('assets-liabilities-summary');
+      expect(within(summary).queryByText(/net worth/i)).toBeNull();
     });
 
     it('marks a zero-balance liability as paid off', async () => {

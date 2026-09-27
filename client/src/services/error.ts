@@ -30,6 +30,7 @@ const CODE_MESSAGES: Record<string, string> = {
   HABIT_INVALID_DATE_RANGE: 'This habit is not active for the current period',
   ASSET_NOT_FOUND: 'This asset no longer exists',
   LIABILITY_NOT_FOUND: 'This liability no longer exists',
+  WEALTH_SNAPSHOT_NOT_FOUND: 'This wealth snapshot no longer exists',
 };
 
 const STATUS_MESSAGES: Record<number, string> = {

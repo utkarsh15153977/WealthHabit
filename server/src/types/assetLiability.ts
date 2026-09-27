@@ -69,9 +69,15 @@ export interface LiabilityListData {
   total: number;
 }
 
+/**
+ * Derived, never stored: `netWorth` is Total Assets − Total Liabilities for
+ * the current live rows (Phase 5C). The two totals remain independent values
+ * and can legitimately sum to a negative net worth.
+ */
 export interface AssetsLiabilitiesSummaryData {
   totalAssets: number;
   totalLiabilities: number;
+  netWorth: number;
   assetCount: number;
   liabilityCount: number;
 }

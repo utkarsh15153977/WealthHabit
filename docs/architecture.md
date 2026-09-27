@@ -324,9 +324,9 @@ channel.
   (liabilities). Records are informational only — they never create or mutate
   transactions, notifications, budgets, bills, subscriptions, recurring rules
   or savings-goal contributions, there is no scheduler, and there is no
-  transaction reconciliation or auto-transaction flow. **Net worth is out of
-  scope (Phase 5C)**: no endpoint, card, page or test exposes a net worth
-  figure — only `totalAssets`, `totalLiabilities` and their counts.
+  transaction reconciliation or auto-transaction flow. These two balances are
+  also the only inputs to the live net worth (see *Net Worth & Wealth
+  Snapshots* below).
 - **Data model** (existing Prisma models, **no migration**):
   - `Asset` — `name`, `type` (string, one of `CASH`, `BANK_ACCOUNT`,
     `FIXED_DEPOSIT`, `PROPERTY`, `VEHICLE`, `GOLD`, `INVESTMENT`, `OTHER`),
@@ -350,8 +350,8 @@ channel.
 - **API / errors**: `GET/POST /api/assets`, `GET/PATCH/DELETE /api/assets/:id`,
   `GET/POST /api/liabilities`, `GET/PATCH/DELETE /api/liabilities/:id`,
   `GET /api/assets-liabilities/summary` → `{totalAssets, totalLiabilities,
-  assetCount, liabilityCount}`. Strict `.strict()` Zod schemas reject unknown
-  fields (mass assignment of `userId`/`id`/`createdAt`/`status` → 400
+  netWorth, assetCount, liabilityCount}`. Strict `.strict()` Zod schemas reject
+  unknown fields (mass assignment of `userId`/`id`/`createdAt`/`status` → 400
   `VALIDATION_ERROR`), the user id always comes from the access token, and
   lists accept `page`/`pageSize` (≤ 50, default 20) plus a single `type`
   filter, ordered `createdAt desc`. Missing or foreign records return 404
@@ -362,7 +362,52 @@ channel.
   with cards, create/edit/delete modals, paid-off badges, per-section empty
   states), an `Assets & Liabilities` nav item on every page, and a Dashboard
   card showing the same two totals plus counts (links to
-  `/assets-liabilities`, never a net worth figure).
+  `/assets-liabilities`).
+
+## Net Worth & Wealth Snapshots
+
+- **Purpose**: show what the user is worth **right now**, and let them keep an
+  immutable history of days they choose to record. Everything is derived on
+  demand — there is no scheduler, job queue, email, push channel, WebSocket or
+  forecasting step, and snapshots are created only by an explicit `POST`.
+- **Current net worth**: `Total Assets − Total Liabilities`, computed from the
+  live `Asset.currentValue` / `Liability.outstandingAmount` sums with
+  `Prisma.Decimal.minus()` (never `Number()`). It is never read from a stored
+  snapshot, never built from transactions or goal contributions, and **never
+  clamped** — liabilities above assets return a negative figure. It is exposed
+  by extending the existing `GET /api/assets-liabilities/summary` (no
+  duplicate net-worth endpoint).
+- **Data model** (existing `WealthSnapshot`, **no migration**): `userId`,
+  `snapshotDate` (UTC calendar day), `totalAssets`, `totalLiabilities`,
+  `netWorth`, all `Decimal(15,2)` except the date, with
+  `@@unique([userId, snapshotDate])`, `@@index([userId])` and
+  `onDelete: Cascade` to the user. The model has no `created_at`/`updated_at`
+  and the API therefore returns none.
+- **Capture**: `POST /api/wealth-snapshots` runs a transaction (aggregate
+  assets → aggregate liabilities → insert), stamps today's UTC day and returns
+  `201 {snapshot, created: true}`. The same day again returns `200 {snapshot,
+  created: false}` with the existing row; a concurrent duplicate hits the
+  unique index (`P2002`) and is converted to that same idempotent result, so
+  the race never surfaces as a 500. The request body is an empty `.strict()`
+  object — `snapshotDate`, `totalAssets`, `netWorth` or `userId` are rejected
+  with 400, so no figure can be client supplied.
+- **Immutability & deletion**: there is no `PATCH` and no `DELETE` route.
+  Changing or deleting a source asset/liability moves the live net worth but
+  leaves stored snapshots untouched; snapshots are permanent history.
+- **API / errors**: `POST /api/wealth-snapshots` (capture, idempotent),
+  `GET /api/wealth-snapshots` (own list, `snapshotDate desc`, `page`/
+  `pageSize` ≤ 50), `GET /api/wealth-snapshots/:id`. Foreign or unknown ids
+  return 404 `WEALTH_SNAPSHOT_NOT_FOUND` (anti-enumeration); anonymous
+  requests return 401. Snapshot rows serialize to exactly `id`,
+  `snapshotDate`, `totalAssets`, `totalLiabilities`, `netWorth` (money via
+  `roundMoney()`), never `userId`.
+- **Frontend**: `/net-worth` page (live total assets / total liabilities /
+  current net worth tiles with the value in red when negative, capture button
+  with success/idempotent feedback, a Recharts line history of net worth with
+  optional assets/liabilities overlays, and a UTC-dated history table), a
+  `Net Worth` nav item on every page, and a Dashboard **Net Worth** card
+  (totals + current net worth + link to `/net-worth`) fed by the same single
+  summary request as the assets & liabilities card.
 
 ## Design Principles
 

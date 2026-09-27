@@ -126,6 +126,15 @@ export async function getAssetsLiabilitiesSummary(): Promise<AssetsLiabilitiesSu
   return unwrapData(response.data);
 }
 
+/**
+ * Current Net Worth (Total Assets − Total Liabilities) for the live rows.
+ * The summary endpoint already returns it, so this is the same single
+ * request under its Phase 5C name — never a second, redundant call.
+ */
+export async function getNetWorth(): Promise<AssetsLiabilitiesSummary> {
+  return getAssetsLiabilitiesSummary();
+}
+
 export const assetLiabilityApi = {
   getAssets,
   getAsset,
@@ -138,4 +147,5 @@ export const assetLiabilityApi = {
   updateLiability,
   deleteLiability,
   getAssetsLiabilitiesSummary,
+  getNetWorth,
 };

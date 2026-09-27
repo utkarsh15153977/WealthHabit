@@ -17,12 +17,12 @@ import {
   deleteLiability,
   findUserAsset,
   findUserLiability,
-  getAssetsLiabilitiesAggregate,
   listUserAssets,
   listUserLiabilities,
   updateAsset,
   updateLiability,
 } from '../services/prismaAssetLiabilityService.js';
+import { getNetWorth } from '../services/prismaWealthSnapshotService.js';
 import { AppError } from '../utils/errors.js';
 import { ApiErrorCodes } from '../types/errorCodes.js';
 import { roundMoney, ZERO } from '../utils/money.js';
@@ -267,13 +267,14 @@ export async function getAssetsLiabilitiesSummaryHandler(
 ): Promise<void> {
   const userId = getAuthenticatedUserId(req);
 
-  const aggregate = await getAssetsLiabilitiesAggregate(userId);
+  const aggregate = await getNetWorth(userId);
 
-  // Independent totals only — this endpoint deliberately does not expose a
-  // net worth figure (Phase 5C owns Assets − Liabilities).
+  // Independent totals plus the derived Net Worth for the same live rows —
+  // one aggregation endpoint, no separate net-worth API (Phase 5C).
   const data: AssetsLiabilitiesSummaryData = {
     totalAssets: roundMoney(aggregate.totalAssets),
     totalLiabilities: roundMoney(aggregate.totalLiabilities),
+    netWorth: roundMoney(aggregate.netWorth),
     assetCount: aggregate.assetCount,
     liabilityCount: aggregate.liabilityCount,
   };

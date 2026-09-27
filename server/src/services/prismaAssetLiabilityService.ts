@@ -186,8 +186,8 @@ export async function deleteLiability(id: string): Promise<void> {
 /**
  * Two SQL aggregates over the caller's own rows (no N+1, no per-row reads).
  * Totals stay in Prisma.Decimal until serialization — no float arithmetic.
- * The two sums are deliberately kept separate: they are never subtracted
- * because Net Worth belongs to Phase 5C.
+ * The two sums are deliberately kept separate: Net Worth (Assets −
+ * Liabilities) is derived from them in prismaWealthSnapshotService.
  */
 export async function getAssetsLiabilitiesAggregate(
   userId: string

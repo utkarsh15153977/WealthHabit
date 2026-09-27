@@ -16,6 +16,7 @@ import {
   RefreshCw,
   Repeat,
   Receipt,
+  Scale,
   Settings,
   Target,
   Trash2,
@@ -699,6 +700,7 @@ export function Goals() {
     { name: 'Challenges', href: '/challenges', icon: Trophy, current: false },
     { name: 'Goals', href: '/goals', icon: PiggyBank, current: true },
     { name: 'Assets & Liabilities', href: '/assets-liabilities', icon: Landmark, current: false },
+    { name: 'Net Worth', href: '/net-worth', icon: Scale, current: false },
     { name: 'Analytics', href: '#', icon: TrendingUp, current: false },
     { name: 'Settings', href: '/profile', icon: Settings, current: false },
   ];

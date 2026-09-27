@@ -53,6 +53,7 @@ beforeEach(async () => {
   await prisma.savingsGoal.deleteMany();
   await prisma.asset.deleteMany();
   await prisma.liability.deleteMany();
+  await prisma.wealthSnapshot.deleteMany();
   await prisma.notification.deleteMany();
   await prisma.category.deleteMany();
   await prisma.session.deleteMany();

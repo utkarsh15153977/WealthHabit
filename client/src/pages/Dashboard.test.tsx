@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { Dashboard } from './Dashboard';
 import { getDashboardSummary } from '../services/dashboardApi';
@@ -83,6 +83,7 @@ const mockedAssetLiabilitySummary = vi.mocked(
 const zeroAssetLiabilitySummary = {
   totalAssets: 0,
   totalLiabilities: 0,
+  netWorth: 0,
   assetCount: 0,
   liabilityCount: 0,
 };
@@ -615,6 +616,7 @@ describe('Dashboard assets and liabilities card', () => {
     mockedAssetLiabilitySummary.mockResolvedValue({
       totalAssets: 50250,
       totalLiabilities: 28500,
+      netWorth: 21750,
       assetCount: 2,
       liabilityCount: 3,
     });
@@ -639,18 +641,59 @@ describe('Dashboard assets and liabilities card', () => {
     expect(mockedAssetLiabilitySummary).toHaveBeenCalledTimes(1);
   });
 
-  it('never shows a net worth figure', async () => {
+  it('keeps net worth out of the assets and liabilities card', async () => {
     mockedAssetLiabilitySummary.mockResolvedValue({
       totalAssets: 1000,
       totalLiabilities: 400,
+      netWorth: 600,
       assetCount: 1,
       liabilityCount: 1,
     });
 
     renderDashboard();
 
-    await screen.findByTestId('dashboard-asset-liability-summary');
-    expect(screen.queryByText(/net worth/i)).toBeNull();
+    const card = await screen.findByTestId('dashboard-asset-liability-summary');
+    expect(within(card).queryByText(/net worth/i)).toBeNull();
+  });
+
+  it('shows current net worth in its own dashboard card', async () => {
+    mockedAssetLiabilitySummary.mockResolvedValue({
+      totalAssets: 1000,
+      totalLiabilities: 400,
+      netWorth: 600,
+      assetCount: 1,
+      liabilityCount: 1,
+    });
+
+    renderDashboard();
+
+    expect(await screen.findByTestId('dashboard-net-worth')).toBeDefined();
+    expect(screen.getByTestId('dashboard-net-worth-assets')).toHaveTextContent(
+      '$1,000'
+    );
+    expect(
+      screen.getByTestId('dashboard-net-worth-liabilities')
+    ).toHaveTextContent('$400');
+    expect(
+      screen.getByTestId('dashboard-net-worth-current')
+    ).toHaveTextContent('$600');
+    expect(mockedAssetLiabilitySummary).toHaveBeenCalledTimes(1);
+  });
+
+  it('marks a negative net worth as an error value', async () => {
+    mockedAssetLiabilitySummary.mockResolvedValue({
+      totalAssets: 500,
+      totalLiabilities: 1500,
+      netWorth: -1000,
+      assetCount: 1,
+      liabilityCount: 2,
+    });
+
+    renderDashboard();
+
+    const current = await screen.findByTestId('dashboard-net-worth-current');
+    expect(current).toHaveTextContent('-$1,000');
+    expect(current.className).toContain('text-error');
   });
 
   it('shows an inline error when the summary fails to load', async () => {

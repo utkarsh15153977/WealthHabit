@@ -15,6 +15,7 @@
     "db:push": "prisma db push",
     "db:test:setup": "tsx scripts/setupTestDb.ts",
     "e2e:assets": "tsx scripts/e2eAssetsLiabilities.ts",
+    "e2e:net-worth": "tsx scripts/e2eNetWorth.ts",
     "test": "vitest run",
     "test:watch": "vitest"
   },

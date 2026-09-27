@@ -77,6 +77,7 @@ export interface LiabilityListResponse {
 export interface AssetsLiabilitiesSummary {
   totalAssets: number;
   totalLiabilities: number;
+  netWorth: number;
   assetCount: number;
   liabilityCount: number;
 }

@@ -21,6 +21,7 @@ import {
     RefreshCw,
     Repeat,
     TrendingUp,
+  Scale,
   Settings,
   ArrowDownRight,
   ArrowUpRight,
@@ -531,6 +532,7 @@ export function Dashboard() {
     { name: 'Challenges', href: '/challenges', icon: Trophy, current: false },
     { name: 'Goals', href: '/goals', icon: PiggyBank, current: false },
     { name: 'Assets & Liabilities', href: '/assets-liabilities', icon: Landmark, current: false },
+    { name: 'Net Worth', href: '/net-worth', icon: Scale, current: false },
     { name: 'Analytics', href: '#', icon: TrendingUp, current: false },
     { name: 'Settings', href: '/profile', icon: Settings, current: false },
   ];
@@ -1480,6 +1482,80 @@ export function Dashboard() {
                     className="inline-block mt-3 text-sm text-primary hover:underline"
                   >
                     Manage assets &amp; liabilities →
+                  </Link>
+                </div>
+              )}
+            </div>
+          </div>
+
+          <div className="card">
+            <div className="card-header flex items-center justify-between">
+              <h2 className="heading-4">Net Worth</h2>
+              <Link
+                to="/net-worth"
+                className="text-sm text-primary hover:underline"
+              >
+                View net worth
+              </Link>
+            </div>
+            <div className="card-body">
+              {assetLiabilitySummaryLoading && (
+                <p className="text-sm text-text-muted text-center py-6">
+                  Loading net worth...
+                </p>
+              )}
+
+              {!assetLiabilitySummaryLoading && assetLiabilitySummaryError && (
+                <p
+                  className="text-sm text-text-muted text-center py-6"
+                  data-testid="dashboard-net-worth-unavailable"
+                >
+                  Net worth unavailable
+                </p>
+              )}
+
+              {!assetLiabilitySummaryLoading && !assetLiabilitySummaryError && (
+                <div className="py-2" data-testid="dashboard-net-worth">
+                  <div className="flex items-center justify-between gap-3 py-2">
+                    <span className="text-sm text-text-muted">Total assets</span>
+                    <span
+                      className="text-sm font-medium text-text"
+                      data-testid="dashboard-net-worth-assets"
+                    >
+                      {formatAmount(assetLiabilitySummary?.totalAssets ?? 0)}
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between gap-3 py-2 border-t border-border">
+                    <span className="text-sm text-text-muted">
+                      Total liabilities
+                    </span>
+                    <span
+                      className="text-sm font-medium text-text"
+                      data-testid="dashboard-net-worth-liabilities"
+                    >
+                      {formatAmount(assetLiabilitySummary?.totalLiabilities ?? 0)}
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between gap-3 py-2 border-t border-border">
+                    <span className="text-sm text-text-muted">
+                      Current net worth
+                    </span>
+                    <span
+                      className={`text-sm font-semibold ${
+                        (assetLiabilitySummary?.netWorth ?? 0) < 0
+                          ? 'text-error'
+                          : 'text-text'
+                      }`}
+                      data-testid="dashboard-net-worth-current"
+                    >
+                      {formatAmount(assetLiabilitySummary?.netWorth ?? 0)}
+                    </span>
+                  </div>
+                  <Link
+                    to="/net-worth"
+                    className="inline-block mt-3 text-sm text-primary hover:underline"
+                  >
+                    Open net worth →
                   </Link>
                 </div>
               )}

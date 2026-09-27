@@ -907,6 +907,7 @@ describe('Assets & Liabilities API', () => {
       expect(res.body.data).toEqual({
         totalAssets: 0,
         totalLiabilities: 0,
+        netWorth: 0,
         assetCount: 0,
         liabilityCount: 0,
       });
@@ -927,6 +928,7 @@ describe('Assets & Liabilities API', () => {
       expect(res.body.data.assetCount).toBe(2);
       expect(res.body.data.totalLiabilities).toBe(285000);
       expect(res.body.data.liabilityCount).toBe(2);
+      expect(res.body.data.netWorth).toBe(4740000);
     });
 
     it('sums decimal amounts without floating point drift', async () => {
@@ -972,20 +974,24 @@ describe('Assets & Liabilities API', () => {
       expect(theirs.body.data.liabilityCount).toBe(0);
     });
 
-    it('never exposes a net worth figure', async () => {
+    it('derives net worth as assets minus liabilities without drift', async () => {
       await createAsset({ currentValue: '1000.00' });
       await createLiability({ outstandingAmount: '400.00' });
 
       const res = await get('/api/assets-liabilities/summary');
 
-      expect(res.body.data).not.toHaveProperty('netWorth');
-      expect(res.body.data).not.toHaveProperty('netWorthAmount');
       expect(Object.keys(res.body.data).sort()).toEqual([
         'assetCount',
         'liabilityCount',
+        'netWorth',
         'totalAssets',
         'totalLiabilities',
       ]);
+      expect(res.body.data.netWorth).toBe(600);
+      expect(res.body.data.netWorth).toBe(
+        res.body.data.totalAssets - res.body.data.totalLiabilities
+      );
+      expect(res.body.data).not.toHaveProperty('netWorthAmount');
     });
   });
 
