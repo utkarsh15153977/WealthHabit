@@ -10,13 +10,14 @@ WealthHabit is a web application that helps users build better financial habits,
 - **Financial Habits** - Habit building for financial wellness
 - **Challenges** - Gamified financial challenges (admin-created, habit-based)
 - **Savings Goals** - Goal-based savings tracking
-- **Wealth Analytics** - Net worth, investments, assets/liabilities
+- **Assets & Liabilities** - Track what you own and what you owe
+- **Wealth Analytics** - Net worth, investments (planned)
 - **Bills & Subscriptions** - Recurring payment management
 - **Reports** - Financial reports and insights
 - **Notifications** - Smart alerts and reminders
 - **Profile & Settings** - User preferences
 
-> ✅ Implemented: **Dashboard, Transactions, Budgets, Financial Habits, Challenges, Savings Goals, Bills & Subscriptions, Recurring Transactions, Profile, and the in-app Notifications center.** The remaining features above are **planned** and not implemented yet.
+> ✅ Implemented: **Dashboard, Transactions, Budgets, Financial Habits, Challenges, Savings Goals, Assets & Liabilities, Bills & Subscriptions, Recurring Transactions, Profile, and the in-app Notifications center.** The remaining features above are **planned** and not implemented yet.
 
 ## Tech Stack
 
@@ -201,6 +202,7 @@ WealthHabit/
 | `npm run db:test:setup` | Create/prepare the dedicated test database |
 | `npm run db:studio` | Open Prisma Studio |
 | `npm test` | Run all tests (client unit tests + backend tests against the test database) |
+| `npm run e2e:assets --workspace=server` | Live end-to-end check for assets & liabilities (API must be running) |
 
 ## Testing
 
@@ -226,12 +228,24 @@ npm run db:test:setup   # creates wealthhabit_test and applies migrations
 npm test
 ```
 
+Live end-to-end check for assets & liabilities (requires the API running on
+`http://localhost:5000`, `E2E_BASE_URL` to override):
+
+```bash
+npm run e2e:assets --workspace=server
+```
+
+It registers throwaway users, exercises asset/liability CRUD, balance updates,
+derived `PAID_OFF` status, the summary (exactly four fields — never net worth),
+ownership 404s, and asserts that transactions and savings goals are untouched,
+then cleans up after itself.
+
 ## Current Status
 
 **Core money-management features are implemented: authentication, categories,
 transactions, budgets, recurring transactions, bills & subscriptions, financial
-habits, financial challenges, savings goals, dashboard analytics, and the
-in-app notifications center.**
+habits, financial challenges, savings goals, assets & liabilities, dashboard
+analytics, and the in-app notifications center.**
 
 Implemented:
 
@@ -244,7 +258,8 @@ Implemented:
   financial-habits summary card (completed this period + per-habit streaks),
   a challenges card (active/joined counts + progress of up to 3 joined
   challenges) and a savings goals card (active/saved/target totals + up to 3
-  active goals)
+  active goals), plus an assets & liabilities card (total assets, total
+  liabilities and record counts — never a net worth figure)
 - ✅ **Financial habits** — CRUD + activation, idempotent completion
   (`POST/DELETE /api/habits/:id/complete`), completion history, progress and
   **streaks** (`current`/`longest` + `completionRate` over elapsed periods,
@@ -299,6 +314,24 @@ Implemented:
   Contributions are informational only: they never create transactions or
   notifications (goal notifications are future work), and there is no
   scheduler.
-- ✅ Server test suite (640 tests) + client unit tests (72 tests)
+- ✅ **Assets & liabilities** — separate CRUD for what you own and what you owe
+  (`GET/POST /api/assets`, `GET/PATCH/DELETE /api/assets/:id`,
+  `GET/POST /api/liabilities`, `GET/PATCH/DELETE /api/liabilities/:id`, plus
+  `GET /api/assets-liabilities/summary`). Balance source of truth is
+  `Asset.currentValue` and `Liability.outstandingAmount`; money is handled as
+  `Prisma.Decimal` end to end and serialized with `roundMoney()` (exact
+  `0.10 + 0.20 + 33.33` arithmetic in tests). The summary returns
+  `totalAssets`, `totalLiabilities`, `assetCount` and `liabilityCount` **and
+  never a net worth figure** — net worth is Phase 5C. `status` is derived at
+  serialization time and never persisted: assets are always `ACTIVE`,
+  liabilities are `PAID_OFF` only when the outstanding balance is `0`
+  (no migration, no status column). Lists support `type` filter + pagination
+  (`page`, `pageSize` ≤ 50). Errors: `ASSET_NOT_FOUND`/`LIABILITY_NOT_FOUND`
+  (404, anti-enumeration); strict Zod schemas reject unknown fields (mass
+  assignment of `userId`/`id`/`createdAt` is a 400). Assets/liabilities are
+  informational only: they never create transactions, notifications, budgets,
+  bills, subscriptions or recurring rules, they never link to savings goals,
+  and there is no scheduler or reconciliation.
+- ✅ Server test suite (715 tests) + client unit tests (92 tests)
 
-Next milestone: **Phase 5B planning** (Phases 1, 2, 3A–3C, 4A, 4B, 4C and 5A delivered)
+Next milestone: **Phase 5C planning** (Phases 1, 2, 3A–3C, 4A, 4B, 4C, 5A and 5B delivered)

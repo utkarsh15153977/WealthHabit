@@ -11,6 +11,7 @@ import { notificationApi } from '../services/notificationApi';
 import { habitApi } from '../services/habitApi';
 import { challengeApi } from '../services/challengeApi';
 import { goalApi } from '../services/goalApi';
+import { assetLiabilityApi } from '../services/assetLiabilityApi';
 import type { DashboardSummaryData } from '../types/dashboard';
 import type { HabitWithProgress } from '../types/habit';
 import type { Challenge, ChallengeListResponse } from '../types/challenge';
@@ -59,6 +60,10 @@ vi.mock('../services/goalApi', () => ({
   goalApi: { getGoals: vi.fn() },
 }));
 
+vi.mock('../services/assetLiabilityApi', () => ({
+  assetLiabilityApi: { getAssetsLiabilitiesSummary: vi.fn() },
+}));
+
 vi.mock('../context/useAuth', () => ({
   useAuth: () => ({
     user: { id: 'u1', firstName: 'Ada', lastName: 'Lovelace', email: 'ada@example.com' },
@@ -71,6 +76,16 @@ const mockedSummary = vi.mocked(getDashboardSummary);
 const mockedHabits = vi.mocked(habitApi.getHabits);
 const mockedChallenges = vi.mocked(challengeApi.getChallenges);
 const mockedGoals = vi.mocked(goalApi.getGoals);
+const mockedAssetLiabilitySummary = vi.mocked(
+  assetLiabilityApi.getAssetsLiabilitiesSummary
+);
+
+const zeroAssetLiabilitySummary = {
+  totalAssets: 0,
+  totalLiabilities: 0,
+  assetCount: 0,
+  liabilityCount: 0,
+};
 
 const emptyGoalList: GoalListResponse = {
   goals: [],
@@ -227,6 +242,7 @@ function renderDashboard() {
 describe('Dashboard habit summary card', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockedAssetLiabilitySummary.mockResolvedValue(zeroAssetLiabilitySummary);
     mockedSummary.mockResolvedValue(emptySummary);
     vi.mocked(budgetApi.getBudgets).mockResolvedValue({
       budgets: [],
@@ -330,6 +346,7 @@ describe('Dashboard habit summary card', () => {
 describe('Dashboard challenges card', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockedAssetLiabilitySummary.mockResolvedValue(zeroAssetLiabilitySummary);
     mockedSummary.mockResolvedValue(emptySummary);
     vi.mocked(budgetApi.getBudgets).mockResolvedValue({
       budgets: [],
@@ -436,6 +453,7 @@ describe('Dashboard challenges card', () => {
 describe('Dashboard savings goals card', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockedAssetLiabilitySummary.mockResolvedValue(zeroAssetLiabilitySummary);
     mockedSummary.mockResolvedValue(emptySummary);
     vi.mocked(budgetApi.getBudgets).mockResolvedValue({
       budgets: [],
@@ -541,5 +559,111 @@ describe('Dashboard savings goals card', () => {
     const alert = await screen.findByRole('alert');
     expect(alert).toHaveTextContent('Goals unavailable');
     expect(screen.queryByTestId('dashboard-goals-summary')).toBeNull();
+  });
+});
+
+describe('Dashboard assets and liabilities card', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockedAssetLiabilitySummary.mockResolvedValue(zeroAssetLiabilitySummary);
+    mockedSummary.mockResolvedValue(emptySummary);
+    vi.mocked(budgetApi.getBudgets).mockResolvedValue({
+      budgets: [],
+      page: 1,
+      pageSize: 20,
+      total: 0,
+    } as Awaited<ReturnType<typeof budgetApi.getBudgets>>);
+    vi.mocked(
+      recurringTransactionApi.getRecurringTransactions
+    ).mockResolvedValue({
+      recurringTransactions: [],
+      page: 1,
+      pageSize: 20,
+      total: 0,
+    } as Awaited<
+      ReturnType<typeof recurringTransactionApi.getRecurringTransactions>
+    >);
+    vi.mocked(billApi.getBills).mockResolvedValue({
+      bills: [],
+      page: 1,
+      pageSize: 20,
+      total: 0,
+    } as Awaited<ReturnType<typeof billApi.getBills>>);
+    vi.mocked(subscriptionApi.getSubscriptions).mockResolvedValue({
+      subscriptions: [],
+      page: 1,
+      pageSize: 20,
+      total: 0,
+    } as Awaited<ReturnType<typeof subscriptionApi.getSubscriptions>>);
+    vi.mocked(notificationApi.getUnreadCount).mockResolvedValue({
+      unreadCount: 0,
+    });
+    vi.mocked(notificationApi.generateNotifications).mockResolvedValue({
+      created: 0,
+    });
+    mockedHabits.mockResolvedValue({
+      habits: [],
+      page: 1,
+      pageSize: 50,
+      total: 0,
+    });
+    mockedChallenges.mockResolvedValue(emptyChallengeList);
+    mockedGoals.mockResolvedValue(emptyGoalList);
+  });
+
+  it('shows total assets, total liabilities and record counts', async () => {
+    mockedAssetLiabilitySummary.mockResolvedValue({
+      totalAssets: 50250,
+      totalLiabilities: 28500,
+      assetCount: 2,
+      liabilityCount: 3,
+    });
+
+    renderDashboard();
+
+    expect(
+      await screen.findByTestId('dashboard-asset-liability-summary')
+    ).toBeDefined();
+    expect(screen.getByTestId('dashboard-total-assets')).toHaveTextContent(
+      '$50,250'
+    );
+    expect(screen.getByTestId('dashboard-total-liabilities')).toHaveTextContent(
+      '$28,500'
+    );
+    expect(
+      screen.getByTestId('dashboard-asset-liability-counts')
+    ).toHaveTextContent('2 assets');
+    expect(
+      screen.getByTestId('dashboard-asset-liability-counts')
+    ).toHaveTextContent('3 liabilities');
+    expect(mockedAssetLiabilitySummary).toHaveBeenCalledTimes(1);
+  });
+
+  it('never shows a net worth figure', async () => {
+    mockedAssetLiabilitySummary.mockResolvedValue({
+      totalAssets: 1000,
+      totalLiabilities: 400,
+      assetCount: 1,
+      liabilityCount: 1,
+    });
+
+    renderDashboard();
+
+    await screen.findByTestId('dashboard-asset-liability-summary');
+    expect(screen.queryByText(/net worth/i)).toBeNull();
+  });
+
+  it('shows an inline error when the summary fails to load', async () => {
+    mockedAssetLiabilitySummary.mockRejectedValue(
+      new Error('Summary unavailable')
+    );
+
+    renderDashboard();
+
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent('Summary unavailable');
+    expect(
+      screen.queryByTestId('dashboard-asset-liability-summary')
+    ).toBeNull();
   });
 });

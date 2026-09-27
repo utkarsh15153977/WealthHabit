@@ -318,6 +318,52 @@ channel.
   goals card (active/saved/target totals + up to 3 active goals, empty state
   links to `/goals`).
 
+## Assets & Liabilities
+
+- **Purpose**: users record what they own (assets) and what they owe
+  (liabilities). Records are informational only — they never create or mutate
+  transactions, notifications, budgets, bills, subscriptions, recurring rules
+  or savings-goal contributions, there is no scheduler, and there is no
+  transaction reconciliation or auto-transaction flow. **Net worth is out of
+  scope (Phase 5C)**: no endpoint, card, page or test exposes a net worth
+  figure — only `totalAssets`, `totalLiabilities` and their counts.
+- **Data model** (existing Prisma models, **no migration**):
+  - `Asset` — `name`, `type` (string, one of `CASH`, `BANK_ACCOUNT`,
+    `FIXED_DEPOSIT`, `PROPERTY`, `VEHICLE`, `GOLD`, `INVESTMENT`, `OTHER`),
+    `currentValue` (Decimal ≥ 0, ≤ 2dp) which is the **balance source of
+    truth**, optional `notes`. `purchaseValue` and `institution` exist in the
+    schema but are intentionally not exposed by the API.
+  - `Liability` — `name`, `type` (one of `CREDIT_CARD`, `PERSONAL_LOAN`,
+    `HOME_LOAN`, `VEHICLE_LOAN`, `EDUCATION_LOAN`, `OTHER`),
+    `outstandingAmount` (Decimal ≥ 0, ≤ 2dp), optional `notes`.
+    `originalAmount`, `interestRate` and `dueDate` are out of scope for 5B.
+- **Derived state** (never persisted): `status` is computed while
+  serializing — assets are always `ACTIVE`, liabilities are `PAID_OFF` only
+  when `outstandingAmount` is `0`, otherwise `ACTIVE`. There is no `status`
+  column, which is why no migration is required.
+- **Money handling**: `nonNegativeAmountSchema` accepts `0` (unlike the
+  transaction `amountSchema` which requires `> 0`), caps at
+  `9999999999999.99` and allows at most 2 decimals. Totals come from Prisma
+  `_sum` aggregates over `Decimal` columns in two parallel queries and are
+  serialized with `roundMoney()` — `Number()` is never used for financial
+  math (asserted by exact decimal tests: `0.10 + 0.20 + 33.33 = 33.63`).
+- **API / errors**: `GET/POST /api/assets`, `GET/PATCH/DELETE /api/assets/:id`,
+  `GET/POST /api/liabilities`, `GET/PATCH/DELETE /api/liabilities/:id`,
+  `GET /api/assets-liabilities/summary` → `{totalAssets, totalLiabilities,
+  assetCount, liabilityCount}`. Strict `.strict()` Zod schemas reject unknown
+  fields (mass assignment of `userId`/`id`/`createdAt`/`status` → 400
+  `VALIDATION_ERROR`), the user id always comes from the access token, and
+  lists accept `page`/`pageSize` (≤ 50, default 20) plus a single `type`
+  filter, ordered `createdAt desc`. Missing or foreign records return 404
+  `ASSET_NOT_FOUND` / `LIABILITY_NOT_FOUND` (anti-enumeration). Plain
+  `PATCH` updates balance fields — there are no separate `/value` endpoints.
+- **Frontend**: `/assets-liabilities` page (summary tiles for total assets and
+  total liabilities with record counts, separate asset and liability sections
+  with cards, create/edit/delete modals, paid-off badges, per-section empty
+  states), an `Assets & Liabilities` nav item on every page, and a Dashboard
+  card showing the same two totals plus counts (links to
+  `/assets-liabilities`, never a net worth figure).
+
 ## Design Principles
 
 - Separation of concerns

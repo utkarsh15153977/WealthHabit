@@ -28,6 +28,8 @@ const CODE_MESSAGES: Record<string, string> = {
   HABIT_NOT_FOUND: 'Habit not found',
   HABIT_INACTIVE: 'This habit is no longer active',
   HABIT_INVALID_DATE_RANGE: 'This habit is not active for the current period',
+  ASSET_NOT_FOUND: 'This asset no longer exists',
+  LIABILITY_NOT_FOUND: 'This liability no longer exists',
 };
 
 const STATUS_MESSAGES: Record<number, string> = {

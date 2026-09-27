@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import {
   CreditCard,
   LayoutDashboard,
+  Landmark,
   ListChecks,
   LogOut,
   PiggyBank,
@@ -168,6 +169,7 @@ export function Bills() {
     { name: 'Habits', href: '/habits', icon: ListChecks, current: false },
     { name: 'Challenges', href: '/challenges', icon: Trophy, current: false },
     { name: 'Goals', href: '/goals', icon: PiggyBank, current: false },
+    { name: 'Assets & Liabilities', href: '/assets-liabilities', icon: Landmark, current: false },
     { name: 'Analytics', href: '#', icon: TrendingUp, current: false },
     { name: 'Settings', href: '/profile', icon: Settings, current: false },
   ];

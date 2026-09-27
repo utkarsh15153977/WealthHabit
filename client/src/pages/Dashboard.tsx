@@ -13,6 +13,7 @@ import {
 import {
   LogOut,
   LayoutDashboard,
+  Landmark,
   ListChecks,
   CreditCard,
     Target,
@@ -42,11 +43,13 @@ import { notificationApi } from '../services/notificationApi';
 import { habitApi } from '../services/habitApi';
 import { challengeApi } from '../services/challengeApi';
 import { goalApi } from '../services/goalApi';
+import { assetLiabilityApi } from '../services/assetLiabilityApi';
 import { formatDate, formatMonth } from '../utils/date';
 import type { DashboardSummaryData } from '../types/dashboard';
 import type { HabitWithProgress } from '../types/habit';
 import type { Challenge } from '../types/challenge';
 import type { Goal } from '../types/goal';
+import type { AssetsLiabilitiesSummary } from '../types/assetLiability';
 import type { BudgetWithProgress } from '../types/budget';
 import type { RecurringTransaction } from '../types/recurringTransaction';
 import type { Bill } from '../types/bill';
@@ -138,6 +141,9 @@ export function Dashboard() {
   const [goalsNearestTarget, setGoalsNearestTarget] = useState<string | null>(null);
   const [goalsLoading, setGoalsLoading] = useState(true);
   const [goalsError, setGoalsError] = useState<string | null>(null);
+  const [assetLiabilitySummary, setAssetLiabilitySummary] = useState<AssetsLiabilitiesSummary | null>(null);
+  const [assetLiabilitySummaryLoading, setAssetLiabilitySummaryLoading] = useState(true);
+  const [assetLiabilitySummaryError, setAssetLiabilitySummaryError] = useState<string | null>(null);
 
   const requestIdRef = useRef(0);
   const budgetsRequestRef = useRef(0);
@@ -148,6 +154,7 @@ export function Dashboard() {
   const habitsRequestRef = useRef(0);
   const challengesRequestRef = useRef(0);
   const goalsRequestRef = useRef(0);
+  const assetLiabilitySummaryRequestRef = useRef(0);
   const hasLoadedRef = useRef(false);
 
   const fetchSummary = useCallback(async (requestedMonth: string, initial: boolean) => {
@@ -448,6 +455,38 @@ export function Dashboard() {
     void fetchGoals();
   }, [fetchGoals]);
 
+  const fetchAssetLiabilitySummary = useCallback(async () => {
+    const requestId = assetLiabilitySummaryRequestRef.current + 1;
+    assetLiabilitySummaryRequestRef.current = requestId;
+
+    setAssetLiabilitySummaryLoading(true);
+    setAssetLiabilitySummaryError(null);
+
+    try {
+      const result = await assetLiabilityApi.getAssetsLiabilitiesSummary();
+
+      if (requestId !== assetLiabilitySummaryRequestRef.current) {
+        return;
+      }
+
+      setAssetLiabilitySummary(result);
+    } catch (error) {
+      if (requestId !== assetLiabilitySummaryRequestRef.current) {
+        return;
+      }
+      setAssetLiabilitySummary(null);
+      setAssetLiabilitySummaryError(getApiErrorMessage(error));
+    } finally {
+      if (requestId === assetLiabilitySummaryRequestRef.current) {
+        setAssetLiabilitySummaryLoading(false);
+      }
+    }
+  }, []);
+
+  useEffect(() => {
+    void fetchAssetLiabilitySummary();
+  }, [fetchAssetLiabilitySummary]);
+
   const habitsCompleted = useMemo(
     () =>
       habitSummary.filter((habit) => habit.progress?.currentPeriod.completed === true)
@@ -491,6 +530,7 @@ export function Dashboard() {
     { name: 'Habits', href: '/habits', icon: ListChecks, current: false },
     { name: 'Challenges', href: '/challenges', icon: Trophy, current: false },
     { name: 'Goals', href: '/goals', icon: PiggyBank, current: false },
+    { name: 'Assets & Liabilities', href: '/assets-liabilities', icon: Landmark, current: false },
     { name: 'Analytics', href: '#', icon: TrendingUp, current: false },
     { name: 'Settings', href: '/profile', icon: Settings, current: false },
   ];
@@ -1378,6 +1418,68 @@ export function Dashboard() {
                     className="inline-block mt-3 text-sm text-primary hover:underline"
                   >
                     View goals →
+                  </Link>
+                </div>
+              )}
+            </div>
+          </div>
+
+          <div className="card">
+            <div className="card-header flex items-center justify-between">
+              <h2 className="heading-4">Assets &amp; Liabilities</h2>
+              <Link
+                to="/assets-liabilities"
+                className="text-sm text-primary hover:underline"
+              >
+                View all
+              </Link>
+            </div>
+            <div className="card-body">
+              {assetLiabilitySummaryLoading && (
+                <p className="text-sm text-text-muted text-center py-6">
+                  Loading assets &amp; liabilities...
+                </p>
+              )}
+
+              {!assetLiabilitySummaryLoading && assetLiabilitySummaryError && (
+                <span className="text-sm text-error block text-center py-6" role="alert">
+                  {assetLiabilitySummaryError}
+                </span>
+              )}
+
+              {!assetLiabilitySummaryLoading && !assetLiabilitySummaryError && (
+                <div className="py-2" data-testid="dashboard-asset-liability-summary">
+                  <div className="flex items-center justify-between gap-3 py-2">
+                    <span className="text-sm text-text-muted">Total assets</span>
+                    <span
+                      className="text-sm font-medium text-text"
+                      data-testid="dashboard-total-assets"
+                    >
+                      {formatAmount(assetLiabilitySummary?.totalAssets ?? 0)}
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between gap-3 py-2 border-t border-border">
+                    <span className="text-sm text-text-muted">Total liabilities</span>
+                    <span
+                      className="text-sm font-medium text-text"
+                      data-testid="dashboard-total-liabilities"
+                    >
+                      {formatAmount(assetLiabilitySummary?.totalLiabilities ?? 0)}
+                    </span>
+                  </div>
+                  <p
+                    className="text-xs text-text-muted mt-2"
+                    data-testid="dashboard-asset-liability-counts"
+                  >
+                    {assetLiabilitySummary?.assetCount ?? 0} assets
+                    {' · '}
+                    {assetLiabilitySummary?.liabilityCount ?? 0} liabilities
+                  </p>
+                  <Link
+                    to="/assets-liabilities"
+                    className="inline-block mt-3 text-sm text-primary hover:underline"
+                  >
+                    Manage assets &amp; liabilities →
                   </Link>
                 </div>
               )}

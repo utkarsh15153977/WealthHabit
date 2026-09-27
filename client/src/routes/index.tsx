@@ -28,6 +28,9 @@ const Challenges = lazy(() =>
   import('../pages/Challenges').then((m) => ({ default: m.Challenges }))
 );
 const Goals = lazy(() => import('../pages/Goals').then((m) => ({ default: m.Goals })));
+const AssetsLiabilities = lazy(() =>
+  import('../pages/AssetsLiabilities').then((m) => ({ default: m.AssetsLiabilities }))
+);
 
 export const routes: RouteObject[] = [
   {
@@ -138,6 +141,14 @@ export const routes: RouteObject[] = [
       </ProtectedRoute>
     ),
   },
+  {
+    path: '/assets-liabilities',
+    element: (
+      <ProtectedRoute>
+        {createElement(WithSuspense(AssetsLiabilities))}
+      </ProtectedRoute>
+    ),
+  },
 ];
 
 export const publicRoutes = ['/', '/login', '/register'];
@@ -153,4 +164,5 @@ export const protectedRoutes = [
   '/habits',
   '/challenges',
   '/goals',
+  '/assets-liabilities',
 ];
