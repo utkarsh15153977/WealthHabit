@@ -385,4 +385,58 @@ describe('Auth Middleware', () => {
       expect(res.status).toBe(401);
     });
   });
+
+  describe('spoofing protection', () => {
+    it('should reject USER with X-User-Role: ADMIN header', async () => {
+      const app = createTestApp([authenticate, requireRole(Role.ADMIN)]);
+
+      const res = await request(app)
+        .get('/test')
+        .set('Authorization', `Bearer ${accessToken}`)
+        .set('X-User-Role', 'ADMIN');
+
+      expect(res.status).toBe(403);
+      expect(res.body.error.code).toBe('FORBIDDEN');
+    });
+
+    it('should reject USER with role in query parameter', async () => {
+      const app = createTestApp([authenticate, requireRole(Role.ADMIN)]);
+
+      const res = await request(app)
+        .get('/test?role=ADMIN')
+        .set('Authorization', `Bearer ${accessToken}`);
+
+      expect(res.status).toBe(403);
+      expect(res.body.error.code).toBe('FORBIDDEN');
+    });
+
+    it('should reject USER with userId of admin in header', async () => {
+      const app = createTestApp([authenticate, requireRole(Role.ADMIN)]);
+
+      const res = await request(app)
+        .get('/test')
+        .set('Authorization', `Bearer ${accessToken}`)
+        .set('X-User-Id', adminId);
+
+      expect(res.status).toBe(403);
+      expect(res.body.error.code).toBe('FORBIDDEN');
+    });
+
+    it('should reject token with spoofed role claim when user is USER in DB', async () => {
+      const spoofedToken = jwt.sign(
+        { sub: userId, role: Role.ADMIN, type: 'access' },
+        env.JWT_ACCESS_SECRET,
+        { expiresIn: '15m' }
+      );
+
+      const app = createTestApp([authenticate, requireRole(Role.ADMIN)]);
+
+      const res = await request(app)
+        .get('/test')
+        .set('Authorization', `Bearer ${spoofedToken}`);
+
+      expect(res.status).toBe(403);
+      expect(res.body.error.code).toBe('FORBIDDEN');
+    });
+  });
 });

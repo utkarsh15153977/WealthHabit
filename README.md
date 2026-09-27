@@ -411,5 +411,15 @@ Implemented:
   range presets, all sections, loading/error/empty/retry states, CSV/PDF
   download buttons, and a `Reports` nav item on every page.
   - ✅ Server test suite (876 tests) + client unit tests (140 tests)
+- ✅ **Admin Authorization** — centralized RBAC with `USER`/`ADMIN` roles:
+  - `requireAdmin` middleware protects admin-only endpoints
+  - Anonymous requests → 401
+  - Authenticated `USER` on admin endpoints → 403
+  - Authenticated `ADMIN` → allowed
+  - Role sourced from authenticated JWT (validated against DB), never from client headers/body/query
+  - Self-escalation prevented: registration defaults to `USER`, profile updates cannot modify role
+  - Suspended/deactivated accounts blocked at auth layer (403)
+  - **Admin-only endpoints**: `POST/PATCH/DELETE /api/challenges` (challenge management)
+  - Frontend: `RequireAdmin` route guard for future admin pages
 
 Next milestone: **to be planned** (Phases 1, 2, 3A–3C, 4A, 4B, 4C, 5A, 5B, 5C and 5D delivered)

@@ -515,6 +515,34 @@ channel.
   report sections, loading/error/empty/retry states, CSV/PDF download
   buttons, and a `Reports` nav item on every page.
 
+## Admin Authorization
+
+- **Role model**: `Role` enum (`USER`, `ADMIN`) in Prisma schema; `User.role` defaults to `USER`.
+- **Authorization middleware**: `requireRole(allowedRoles)` / `requireAdmin` / `requireUser` in `server/src/middleware/rbacMiddleware.ts`.
+- **Authentication prerequisite**: `authenticate` middleware validates JWT, fetches user from DB, checks `AccountStatus` (`ACTIVE`/`SUSPENDED`/`DEACTIVATED`), attaches `req.user` with role from DB.
+- **Access control**:
+  - Anonymous → 401 `UNAUTHORIZED`
+  - Authenticated `USER` on admin endpoint → 403 `FORBIDDEN`
+  - Authenticated `ADMIN` → allowed
+  - Suspended/deactivated accounts → 403 `ACCOUNT_SUSPENDED` / `ACCOUNT_DEACTIVATED`
+- **Role source**: always from authenticated JWT (validated against DB on each request), never from client headers (`X-User-Role`), body (`role`), query (`?role=`), or arbitrary headers.
+- **Self-escalation protection**:
+  - Registration: `role` defaults to `USER`, not accepted from input
+  - Profile update (`PATCH /api/users/me`): strict Zod schema rejects `role` field
+  - No public role-management API; `ADMIN` promotion via controlled SQL only
+- **Admin-only endpoints** (Phase 5F-1):
+  - `POST /api/challenges` — create challenge
+  - `PATCH /api/challenges/:id` — update challenge
+  - `DELETE /api/challenges/:id` — delete challenge
+- **User-accessible challenge endpoints** (not admin-only):
+  - `GET /api/challenges` — list challenges
+  - `GET /api/challenges/:id` — get challenge
+  - `POST /api/challenges/:id/join` — join challenge
+  - `DELETE /api/challenges/:id/leave` — leave challenge
+  - `GET /api/challenges/:id/progress` — get progress
+  - `POST /api/challenges/:id/requirements/:requirementId/habit` — map requirement habit
+- **Frontend**: `RequireAdmin` route guard (`client/src/components/RequireAdmin.tsx`) for future admin pages; backend remains authoritative security boundary.
+
 ## Design Principles
 
 - Separation of concerns
