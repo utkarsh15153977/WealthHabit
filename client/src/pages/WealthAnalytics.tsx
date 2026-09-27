@@ -31,6 +31,7 @@ import {
   Scale,
   Settings,
   Target,
+  FileText,
   TrendingUp,
   Trophy,
 } from 'lucide-react';
@@ -307,6 +308,7 @@ export function WealthAnalytics() {
     { name: 'Assets & Liabilities', href: '/assets-liabilities', icon: Landmark, current: false },
     { name: 'Net Worth', href: '/net-worth', icon: Scale, current: false },
     { name: 'Wealth Analytics', href: '/wealth-analytics', icon: TrendingUp, current: true },
+    { name: 'Reports', href: '/reports', icon: FileText, current: false },
     { name: 'Settings', href: '/profile', icon: Settings, current: false },
   ];
 

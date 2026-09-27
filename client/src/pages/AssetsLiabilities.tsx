@@ -19,6 +19,7 @@ import {
   Settings,
   Target,
   Trash2,
+  FileText,
   TrendingUp,
   Trophy,
   X,
@@ -494,6 +495,7 @@ export function AssetsLiabilities() {
     { name: 'Assets & Liabilities', href: '/assets-liabilities', icon: Landmark, current: true },
     { name: 'Net Worth', href: '/net-worth', icon: Scale, current: false },
     { name: 'Wealth Analytics', href: '/wealth-analytics', icon: TrendingUp, current: false },
+    { name: 'Reports', href: '/reports', icon: FileText, current: false },
     { name: 'Settings', href: '/profile', icon: Settings, current: false },
   ];
 

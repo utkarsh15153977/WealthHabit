@@ -464,12 +464,56 @@ channel.
   strict query, so `?userId=` or `?netWorth=` is a 400 (mass-assignment
   protection); unknown or malformed range params are also 400.
 - **Frontend**: `/wealth-analytics` page (30/90/180/365-day range buttons and
-  six sections — current position, net worth history with Recharts line chart
-  and "Net Worth Change", asset allocation pie + table, liability
-  composition, savings goal summary, cash flow bars + tables — each with
-  independent loading, error-with-Retry and empty state), a `Wealth
-  Analytics` nav item on every page, and Dashboard shortcuts from the net
-  worth card.
+    six sections — current position, net worth history with Recharts line chart
+    and "Net Worth Change", asset allocation pie + table, liability
+    composition, savings goal summary, cash flow bars + tables — each with
+    independent loading, error-with-Retry and empty state), a `Wealth
+    Analytics` nav item on every page, and Dashboard shortcuts from the net
+    worth card.
+
+## Financial Reports
+
+- **Purpose**: a read-only export layer that assembles the same authoritative
+  figures from Wealth Analytics into portable formats — JSON preview, CSV and
+  PDF — without storing or duplicating any financial state.
+- **Endpoints** (all `GET`, mounted at `/api/reports`):
+  - `/financial` → `FinancialReportData` JSON preview.
+  - `/financial.csv` → RFC 4180 CSV with UTF-8 BOM, CRLF line endings,
+    formula-injection guard (user text starting with `=`, `+`, `-`, `@`,
+    tab, or CR is prefixed with `'`), deterministic filename
+    `wealthhabit-financial-report-YYYY-MM-DD.csv`.
+  - `/financial.pdf` → server-side PDF via pdfkit (A4, uncompressed content
+    streams, explicit page breaks, footers with page numbers), deterministic
+    filename `wealthhabit-financial-report-YYYY-MM-DD.pdf`.
+- **Data contract**: single `FinancialReportData` object reused by all three
+  renderers so JSON, CSV and PDF can never disagree:
+  - `period` — UTC calendar-day range, timezone, generated timestamp.
+  - `overview` — income, expenses, net cash flow, transaction count,
+    current total assets/liabilities/net worth, goal counts, goal totals,
+    overall goal progress.
+  - `incomeCategories` / `expenseCategories` — category breakdowns with
+    totals and share percentages.
+  - `assets` / `liabilities` — current positions with type groupings,
+    individual items, and 2dp share percentages.
+  - `netWorthHistory` — stored `WealthSnapshot` rows in range (no
+    interpolation).
+  - `goals` — goal summary (counts, totals, progress) and per-goal
+    breakdown with derived `currentAmount` from contributions.
+- **Date range**: reuses the Wealth Analytics range contract verbatim — UTC
+  calendar days, default 365 days, maximum 1825 days (5 years), reversed
+  / invalid / wider ranges are 400 `VALIDATION_ERROR`; range never affects
+  current-position sections (assets, liabilities, goals).
+- **Security**: only `GET` endpoints exist (POST/PATCH/DELETE → 404);
+  anonymous → 401; strict Zod schema rejects unknown parameters
+  (`?userId=`, `?netWorth=`, etc. → 400 `VALIDATION_ERROR`); user id
+  always from authenticated JWT, never from query/body/route.
+- **Read-only by construction**: the report builder performs no arithmetic
+  of its own — every figure is delegated to existing Phase 5D Wealth
+  Analytics functions. A report read never creates a snapshot, notification,
+  or mutation of any financial row.
+- **Frontend**: `/reports` page with 30d/90d/6m/12m range presets, all
+  report sections, loading/error/empty/retry states, CSV/PDF download
+  buttons, and a `Reports` nav item on every page.
 
 ## Design Principles
 

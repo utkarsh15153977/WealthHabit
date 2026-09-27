@@ -18,7 +18,7 @@ WealthHabit is a web application that helps users build better financial habits,
 - **Notifications** - Smart alerts and reminders
 - **Profile & Settings** - User preferences
 
-> ✅ Implemented: **Dashboard, Transactions, Budgets, Financial Habits, Challenges, Savings Goals, Assets & Liabilities, Net Worth & Snapshots, Wealth Analytics, Bills & Subscriptions, Recurring Transactions, Profile, and the in-app Notifications center.** The remaining features above are **planned** and not implemented yet.
+> ✅ Implemented: **Dashboard, Transactions, Budgets, Financial Habits, Challenges, Savings Goals, Assets & Liabilities, Net Worth & Snapshots, Wealth Analytics, Bills & Subscriptions, Recurring Transactions, Profile, Reports, and the in-app Notifications center.** The remaining features above are **planned** and not implemented yet.
 
 ## Tech Stack
 
@@ -206,6 +206,7 @@ WealthHabit/
 | `npm run e2e:assets --workspace=server` | Live end-to-end check for assets & liabilities (API must be running) |
 | `npm run e2e:net-worth --workspace=server` | Live end-to-end check for net worth & snapshots (API must be running) |
 | `npm run e2e:wealth-analytics --workspace=server` | Live end-to-end check for the read-only wealth analytics API (API must be running) |
+| `npm run e2e:reports --workspace=server` | Live end-to-end check for the read-only financial reports API (API must be running) |
 
 ## Testing
 
@@ -238,6 +239,7 @@ Live end-to-end checks (require the API running on `http://localhost:5000`,
 npm run e2e:assets --workspace=server            # 37 checks
 npm run e2e:net-worth --workspace=server         # 40 checks
 npm run e2e:wealth-analytics --workspace=server  # 81 checks
+npm run e2e:reports --workspace=server           # 81 checks
 ```
 
 All three register throwaway users, exercise the API over HTTP and remove those
@@ -393,6 +395,21 @@ Implemented:
   composition, savings goal summary, cash flow — each with its own loading,
   error-with-Retry and empty state, plus a `Wealth Analytics` nav item on
   every page and Dashboard links from the net worth card.
-- ✅ Server test suite (804 tests) + client unit tests (124 tests)
+- ✅ **Financial Reports** — read-only report endpoints at `GET /api/reports`:
+  `/financial` (JSON preview), `/financial.csv`, `/financial.pdf`. Built on the
+  same `FinancialReportData` contract that powers Wealth Analytics, ensuring
+  JSON, CSV and PDF can never disagree. Contains: report period, financial
+  overview (income, expenses, net cash flow, assets, liabilities, net worth),
+  income/expense category breakdowns, current asset/liability positions with
+  type breakdowns, net worth history from stored snapshots (no interpolation),
+  and savings goals with progress. Date range uses the same UTC calendar-day
+  semantics (default 365 days, max 1825 days). CSV is RFC 4180-compliant with
+  formula-injection protection and UTF-8 BOM. PDF is generated server-side via
+  pdfkit with explicit page breaks and footers. Strict validation rejects
+  unknown query parameters (`?userId=`, `?netWorth=` → 400). No write routes
+  (POST/PATCH/DELETE → 404), anonymous → 401. Frontend: `/reports` page with
+  range presets, all sections, loading/error/empty/retry states, CSV/PDF
+  download buttons, and a `Reports` nav item on every page.
+  - ✅ Server test suite (876 tests) + client unit tests (140 tests)
 
 Next milestone: **to be planned** (Phases 1, 2, 3A–3C, 4A, 4B, 4C, 5A, 5B, 5C and 5D delivered)

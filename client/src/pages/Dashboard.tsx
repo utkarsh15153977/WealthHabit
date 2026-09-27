@@ -20,6 +20,7 @@ import {
     Receipt,
     RefreshCw,
     Repeat,
+    FileText,
     TrendingUp,
   Scale,
   Settings,
@@ -534,6 +535,7 @@ export function Dashboard() {
     { name: 'Assets & Liabilities', href: '/assets-liabilities', icon: Landmark, current: false },
     { name: 'Net Worth', href: '/net-worth', icon: Scale, current: false },
     { name: 'Wealth Analytics', href: '/wealth-analytics', icon: TrendingUp, current: false },
+    { name: 'Reports', href: '/reports', icon: FileText, current: false },
     { name: 'Settings', href: '/profile', icon: Settings, current: false },
   ];
 
@@ -1564,6 +1566,13 @@ export function Dashboard() {
                       data-testid="dashboard-wealth-analytics-link"
                     >
                       View Wealth Analytics →
+                    </Link>
+                    <Link
+                      to="/reports"
+                      className="text-sm text-primary hover:underline"
+                      data-testid="dashboard-reports-link"
+                    >
+                      View Reports →
                     </Link>
                   </div>
                 </div>

@@ -17,6 +17,7 @@
     "e2e:assets": "tsx scripts/e2eAssetsLiabilities.ts",
     "e2e:net-worth": "tsx scripts/e2eNetWorth.ts",
     "e2e:wealth-analytics": "tsx scripts/e2eWealthAnalytics.ts",
+    "e2e:reports": "tsx scripts/e2eReports.ts",
     "test": "vitest run",
     "test:watch": "vitest"
   },
@@ -34,6 +35,7 @@
     "helmet": "^7.1.0",
     "jsonwebtoken": "^9.0.3",
     "morgan": "^1.10.0",
+    "pdfkit": "^0.20.2",
     "zod": "^3.23.8"
   },
   "devDependencies": {
@@ -45,6 +47,7 @@
     "@types/jsonwebtoken": "^9.0.10",
     "@types/morgan": "^1.9.9",
     "@types/node": "^22.20.4",
+    "@types/pdfkit": "^0.17.6",
     "@types/supertest": "^7.2.1",
     "@typescript-eslint/eslint-plugin": "^7.18.0",
     "@typescript-eslint/parser": "^7.18.0",
