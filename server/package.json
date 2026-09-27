@@ -16,6 +16,7 @@
     "db:test:setup": "tsx scripts/setupTestDb.ts",
     "e2e:assets": "tsx scripts/e2eAssetsLiabilities.ts",
     "e2e:net-worth": "tsx scripts/e2eNetWorth.ts",
+    "e2e:wealth-analytics": "tsx scripts/e2eWealthAnalytics.ts",
     "test": "vitest run",
     "test:watch": "vitest"
   },

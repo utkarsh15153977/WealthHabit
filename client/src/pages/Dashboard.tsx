@@ -533,7 +533,7 @@ export function Dashboard() {
     { name: 'Goals', href: '/goals', icon: PiggyBank, current: false },
     { name: 'Assets & Liabilities', href: '/assets-liabilities', icon: Landmark, current: false },
     { name: 'Net Worth', href: '/net-worth', icon: Scale, current: false },
-    { name: 'Analytics', href: '#', icon: TrendingUp, current: false },
+    { name: 'Wealth Analytics', href: '/wealth-analytics', icon: TrendingUp, current: false },
     { name: 'Settings', href: '/profile', icon: Settings, current: false },
   ];
 
@@ -1551,12 +1551,21 @@ export function Dashboard() {
                       {formatAmount(assetLiabilitySummary?.netWorth ?? 0)}
                     </span>
                   </div>
-                  <Link
-                    to="/net-worth"
-                    className="inline-block mt-3 text-sm text-primary hover:underline"
-                  >
-                    Open net worth →
-                  </Link>
+                  <div className="mt-3 flex flex-wrap items-center gap-4">
+                    <Link
+                      to="/net-worth"
+                      className="text-sm text-primary hover:underline"
+                    >
+                      Open net worth →
+                    </Link>
+                    <Link
+                      to="/wealth-analytics"
+                      className="text-sm text-primary hover:underline"
+                      data-testid="dashboard-wealth-analytics-link"
+                    >
+                      View Wealth Analytics →
+                    </Link>
+                  </div>
                 </div>
               )}
             </div>

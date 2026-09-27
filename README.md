@@ -12,13 +12,13 @@ WealthHabit is a web application that helps users build better financial habits,
 - **Savings Goals** - Goal-based savings tracking
 - **Assets & Liabilities** - Track what you own and what you owe
 - **Net Worth & Snapshots** - Live net worth with a captured history
-- **Wealth Analytics** - Advanced investment analytics (planned)
+- **Wealth Analytics** - Read-only analytics over your wealth data
 - **Bills & Subscriptions** - Recurring payment management
 - **Reports** - Financial reports and insights
 - **Notifications** - Smart alerts and reminders
 - **Profile & Settings** - User preferences
 
-> ✅ Implemented: **Dashboard, Transactions, Budgets, Financial Habits, Challenges, Savings Goals, Assets & Liabilities, Net Worth & Snapshots, Bills & Subscriptions, Recurring Transactions, Profile, and the in-app Notifications center.** The remaining features above are **planned** and not implemented yet.
+> ✅ Implemented: **Dashboard, Transactions, Budgets, Financial Habits, Challenges, Savings Goals, Assets & Liabilities, Net Worth & Snapshots, Wealth Analytics, Bills & Subscriptions, Recurring Transactions, Profile, and the in-app Notifications center.** The remaining features above are **planned** and not implemented yet.
 
 ## Tech Stack
 
@@ -205,6 +205,7 @@ WealthHabit/
 | `npm test` | Run all tests (client unit tests + backend tests against the test database) |
 | `npm run e2e:assets --workspace=server` | Live end-to-end check for assets & liabilities (API must be running) |
 | `npm run e2e:net-worth --workspace=server` | Live end-to-end check for net worth & snapshots (API must be running) |
+| `npm run e2e:wealth-analytics --workspace=server` | Live end-to-end check for the read-only wealth analytics API (API must be running) |
 
 ## Testing
 
@@ -234,25 +235,34 @@ Live end-to-end checks (require the API running on `http://localhost:5000`,
 `E2E_BASE_URL` to override):
 
 ```bash
-npm run e2e:assets --workspace=server     # 37 checks
-npm run e2e:net-worth --workspace=server  # 40 checks
+npm run e2e:assets --workspace=server            # 37 checks
+npm run e2e:net-worth --workspace=server         # 40 checks
+npm run e2e:wealth-analytics --workspace=server  # 81 checks
 ```
 
-Both register throwaway users, exercise the API over HTTP and remove those
+All three register throwaway users, exercise the API over HTTP and remove those
 users afterwards. `e2e:assets` covers asset/liability CRUD, balance updates,
 derived `PAID_OFF` status, the summary (totals, counts and derived net worth),
 ownership 404s, and asserts that transactions and savings goals are untouched.
 `e2e:net-worth` covers the live net worth calculation (including a negative
 result and the transaction/goal decoys), snapshot capture, idempotent and
 concurrent same-day capture, immutability, listing/paging, ownership 404s and
-mass-assignment rejection.
+mass-assignment rejection. `e2e:wealth-analytics` seeds assets, liabilities,
+transactions, categories, goals and two snapshots (one backfilled), then checks
+the current position, the goal summary, net-worth history and change, asset and
+liability composition, cash flow and category breakdowns, date-range filtering
+and rejection, per-user isolation, a negative net worth, and that reading
+analytics never writes a snapshot, notification, transaction, asset, goal or
+stored snapshot value — plus 404s for every write method and 400s for
+client-supplied financial values.
 
 ## Current Status
 
 **Core money-management features are implemented: authentication, categories,
 transactions, budgets, recurring transactions, bills & subscriptions, financial
 habits, financial challenges, savings goals, assets & liabilities, net worth &
-wealth snapshots, dashboard analytics, and the in-app notifications center.**
+wealth snapshots, read-only wealth analytics, dashboard analytics, and the
+in-app notifications center.**
 
 Implemented:
 
@@ -359,6 +369,30 @@ Implemented:
   `WEALTH_SNAPSHOT_NOT_FOUND` (404) hides other users' snapshots. Deleting an
   asset or liability changes the live net worth but never alters or removes a
   captured snapshot.
-- ✅ Server test suite (743 tests) + client unit tests (104 tests)
+- ✅ **Wealth analytics** — five read-only endpoints under
+  `GET /api/wealth-analytics` (`/summary`, `/net-worth`, `/assets`,
+  `/liabilities`, `/cash-flow`) that derive everything on demand from the
+  existing sources of truth: live `Asset.currentValue`/`Liability.outstandingAmount`
+  sums, stored `WealthSnapshot` history, goal contributions and
+  `Transaction` records. No new tables or migrations, no writes of any kind
+  (a read never creates a snapshot, notification or record), no scheduler, no
+  forecast or advice. The two range-dependent endpoints take `dateFrom`/
+  `dateTo` (UTC calendar days, defaulting to the last 365 days, maximum span
+  1825 days; reversed, invalid or wider ranges are a 400 `VALIDATION_ERROR`);
+  the range-independent endpoints accept an empty query only. Money stays
+  `Prisma.Decimal` until serialization, shares are 2dp percentages of the
+  total (a non-positive base yields a null percentage), net-worth change is
+  `latest − earliest` over the snapshots in range (`null` with fewer than two
+  points) and cash flow is never reported as net worth change. Goal totals
+  reuse the goals list meta and the same capped `progressPercent` algorithm
+  (now shared as `goalProgressValues`). Strict queries reject client-supplied
+  values (`userId`/`netWorth`/`income` → 400), only GET exists (write methods
+  → 404) and anonymous requests are 401. Frontend: `/wealth-analytics` page
+  with 30/90/180/365-day range buttons and six sections — current position,
+  net worth history + "Net Worth Change", asset allocation, liability
+  composition, savings goal summary, cash flow — each with its own loading,
+  error-with-Retry and empty state, plus a `Wealth Analytics` nav item on
+  every page and Dashboard links from the net worth card.
+- ✅ Server test suite (804 tests) + client unit tests (124 tests)
 
-Next milestone: **Phase 5D planning** (Phases 1, 2, 3A–3C, 4A, 4B, 4C, 5A, 5B and 5C delivered)
+Next milestone: **to be planned** (Phases 1, 2, 3A–3C, 4A, 4B, 4C, 5A, 5B, 5C and 5D delivered)

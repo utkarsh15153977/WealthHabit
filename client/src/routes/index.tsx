@@ -34,6 +34,9 @@ const AssetsLiabilities = lazy(() =>
 const NetWorth = lazy(() =>
   import('../pages/NetWorth').then((m) => ({ default: m.NetWorth }))
 );
+const WealthAnalytics = lazy(() =>
+  import('../pages/WealthAnalytics').then((m) => ({ default: m.WealthAnalytics }))
+);
 
 export const routes: RouteObject[] = [
   {
@@ -160,6 +163,14 @@ export const routes: RouteObject[] = [
       </ProtectedRoute>
     ),
   },
+  {
+    path: '/wealth-analytics',
+    element: (
+      <ProtectedRoute>
+        {createElement(WithSuspense(WealthAnalytics))}
+      </ProtectedRoute>
+    ),
+  },
 ];
 
 export const publicRoutes = ['/', '/login', '/register'];
@@ -177,4 +188,5 @@ export const protectedRoutes = [
   '/goals',
   '/assets-liabilities',
   '/net-worth',
+  '/wealth-analytics',
 ];

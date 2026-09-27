@@ -696,6 +696,22 @@ describe('Dashboard assets and liabilities card', () => {
     expect(current.className).toContain('text-error');
   });
 
+  it('links to wealth analytics from the net worth card', async () => {
+    mockedAssetLiabilitySummary.mockResolvedValue({
+      totalAssets: 1000,
+      totalLiabilities: 400,
+      netWorth: 600,
+      assetCount: 1,
+      liabilityCount: 1,
+    });
+
+    renderDashboard();
+
+    const link = await screen.findByTestId('dashboard-wealth-analytics-link');
+    expect(link).toHaveAttribute('href', '/wealth-analytics');
+    expect(link).toHaveTextContent('View Wealth Analytics');
+  });
+
   it('shows an inline error when the summary fails to load', async () => {
     mockedAssetLiabilitySummary.mockRejectedValue(
       new Error('Summary unavailable')

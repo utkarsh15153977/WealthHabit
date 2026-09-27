@@ -174,7 +174,7 @@ export function NetWorth() {
     { name: 'Goals', href: '/goals', icon: PiggyBank, current: false },
     { name: 'Assets & Liabilities', href: '/assets-liabilities', icon: Landmark, current: false },
     { name: 'Net Worth', href: '/net-worth', icon: Scale, current: true },
-    { name: 'Analytics', href: '#', icon: TrendingUp, current: false },
+    { name: 'Wealth Analytics', href: '/wealth-analytics', icon: TrendingUp, current: false },
     { name: 'Settings', href: '/profile', icon: Settings, current: false },
   ];
 

@@ -409,6 +409,68 @@ channel.
   (totals + current net worth + link to `/net-worth`) fed by the same single
   summary request as the assets & liabilities card.
 
+## Wealth Analytics
+
+- **Purpose**: one read-only place that answers "where do I stand?" by
+  combining the sources of truth that earlier phases introduced. Every number
+  is derived on demand — there is **no new table, no migration, no write of
+  any kind** (a read never creates a snapshot, notification, transaction or
+  record), no scheduler, and no forecasting, scoring or financial advice.
+- **Endpoints** (all `GET`, mounted at `/api/wealth-analytics`):
+  - `/summary` → `{current, goals}` — range independent. `current` is the
+    live `Asset.currentValue` / `Liability.outstandingAmount` aggregation
+    (`totalAssets`, `totalLiabilities`, `netWorth`, `assetCount`,
+    `liabilityCount`) and matches `GET /api/assets-liabilities/summary`
+    exactly. `goals` reports `goalCount`/`activeCount`/`completedCount`,
+    `totalTargetAmount`/`totalSavedAmount`, overall `progressPercent` and an
+    `items` breakdown (≤ 50 rows) with per-goal derived progress.
+  - `/net-worth?dateFrom&dateTo` → `{history, change}` — stored
+    `WealthSnapshot` rows in range (`snapshotDate ≥ dateFrom`, `≤ dateTo`),
+    chronological, each `{snapshotDate, totalAssets, totalLiabilities,
+    netWorth}`; `change = {absolute, percentage}` is `latest − earliest` over
+    those points, `null` with fewer than two, and `percentage` is `null`
+    unless the earliest net worth is positive. Nothing is interpolated
+    between stored days. The label is **"Net Worth Change"** only.
+  - `/assets` → `{totalAssets, assetCount, byType, assets}` — grouped with
+    `currentValue` sums and 2dp share percentages, plus every asset with its
+    share.
+  - `/liabilities` → `{totalLiabilities, liabilityCount, byType,
+    liabilities}` — same shape; balances are named `outstandingBalance`
+    (item) / `totalBalance` (by-type group), the documented analytics names
+    for the real `Liability.outstandingAmount` column, while assets use
+    `currentValue`/`totalValue`.
+  - `/cash-flow?dateFrom&dateTo` → `{income, expenses, net,
+    transactionCount, incomeByCategory, expenseByCategory}` — only
+    `INCOME`/`EXPENSE` transactions in `[dateFrom, dateTo + 1 day)` (so the
+    end day is inclusive), grouped via `transaction.groupBy`, categories
+    resolved in one `category.findMany`, shares are 2dp percentages of the
+    income or expense side. `net` is cash movement in the range and is
+    explicitly **not** net worth change.
+- **Date range**: `dateFrom`/`dateTo` are UTC calendar days, strictly
+  validated — required order, maximum span 1825 days (5 years), defaulting
+  to the last 365 days ending today when absent. Reversed, invalid or
+  wider-than-max ranges are 400 `VALIDATION_ERROR`; the range never affects
+  `/summary`, `/assets` or `/liabilities`.
+- **Money & percentages**: values stay `Prisma.Decimal` through every
+  computation and are serialized with `roundMoney()`; shares use
+  `shareOf()` → `roundRate()` (2dp), returning `0` when the total is zero
+  and `null` percentages when a base is not positive. Goal progress reuses
+  the Goals algorithm — `goalProgressValues()` extracted from
+  `goalController.ts` into `utils/money.ts` — so the page and the goals list
+  can never disagree.
+- **API / errors**: only `GET` exists — `POST`/`PATCH`/`DELETE` are 404,
+  anonymous is 401, and the user id always comes from the access token
+  (every query is user-scoped). Range-independent endpoints take an empty
+  strict query, so `?userId=` or `?netWorth=` is a 400 (mass-assignment
+  protection); unknown or malformed range params are also 400.
+- **Frontend**: `/wealth-analytics` page (30/90/180/365-day range buttons and
+  six sections — current position, net worth history with Recharts line chart
+  and "Net Worth Change", asset allocation pie + table, liability
+  composition, savings goal summary, cash flow bars + tables — each with
+  independent loading, error-with-Retry and empty state), a `Wealth
+  Analytics` nav item on every page, and Dashboard shortcuts from the net
+  worth card.
+
 ## Design Principles
 
 - Separation of concerns

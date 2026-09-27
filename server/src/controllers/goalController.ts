@@ -1,5 +1,5 @@
 import { Response } from 'express';
-import { GoalContribution, Prisma, SavingsGoal } from '@prisma/client';
+import { GoalContribution, SavingsGoal } from '@prisma/client';
 import { AuthenticatedRequest } from '../middleware/authMiddleware.js';
 import { getAuthenticatedUserId } from '../middleware/ownershipMiddleware.js';
 import {
@@ -27,7 +27,7 @@ import {
 import { AppError } from '../utils/errors.js';
 import { ApiErrorCodes } from '../types/errorCodes.js';
 import { startOfUtcDay } from '../utils/date.js';
-import { roundMoney, roundRate, ZERO } from '../utils/money.js';
+import { goalProgressValues as progressValues, roundMoney, ZERO } from '../utils/money.js';
 import {
   GoalContributionData,
   GoalContributionListData,
@@ -36,25 +36,10 @@ import {
   GoalProgress,
 } from '../types/goal.js';
 
-const HUNDRED = new Prisma.Decimal(100);
-
 const EMPTY_AGGREGATE: GoalAggregate = {
   savedAmount: ZERO,
   contributionCount: 0,
 };
-
-function progressValues(saved: Prisma.Decimal, target: Prisma.Decimal): {
-  remainingAmount: Prisma.Decimal;
-  progressPercent: number;
-} {
-  const remaining = target.minus(saved);
-  const remainingAmount = remaining.isNegative() ? ZERO : remaining;
-  let percent = target.lte(ZERO) ? ZERO : saved.div(target).times(HUNDRED);
-  if (percent.gt(HUNDRED)) {
-    percent = HUNDRED;
-  }
-  return { remainingAmount, progressPercent: roundRate(percent) };
-}
 
 function isOverdue(
   status: SavingsGoal['status'],
