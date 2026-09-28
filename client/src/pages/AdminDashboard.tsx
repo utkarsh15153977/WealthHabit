@@ -248,6 +248,14 @@ export function AdminDashboard() {
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-2 self-start sm:self-auto">
+            <Link
+              to="/admin/users"
+              className="btn-secondary btn-sm inline-flex items-center gap-2"
+              data-testid="admin-dashboard-manage-users"
+            >
+              <Users className="w-4 h-4" aria-hidden="true" />
+              Manage users
+            </Link>
             <button
               type="button"
               className="btn-secondary btn-sm inline-flex items-center gap-2"

@@ -44,6 +44,9 @@ const Reports = lazy(() =>
 const AdminDashboard = lazy(() =>
   import('../pages/AdminDashboard').then((m) => ({ default: m.AdminDashboard }))
 );
+const AdminUsers = lazy(() =>
+  import('../pages/AdminUsers').then((m) => ({ default: m.AdminUsers }))
+);
 
 export const routes: RouteObject[] = [
   {
@@ -194,6 +197,14 @@ export const routes: RouteObject[] = [
       </RequireAdmin>
     ),
   },
+  {
+    path: '/admin/users',
+    element: (
+      <RequireAdmin>
+        {createElement(WithSuspense(AdminUsers))}
+      </RequireAdmin>
+    ),
+  },
 ];
 
 export const publicRoutes = ['/', '/login', '/register'];
@@ -214,4 +225,5 @@ export const protectedRoutes = [
   '/wealth-analytics',
   '/reports',
   '/admin',
+  '/admin/users',
 ];

@@ -529,11 +529,18 @@ channel.
 - **Self-escalation protection**:
   - Registration: `role` defaults to `USER`, not accepted from input
   - Profile update (`PATCH /api/users/me`): strict Zod schema rejects `role` field
-  - No public role-management API; `ADMIN` promotion via controlled SQL only
-- **Admin-only endpoints** (Phase 5F-1):
+  - No public role-management API; role changes only via the ADMIN-only
+    `PATCH /api/admin/users/:id/role` operation (Phase 5F-3); `ADMIN`
+    promotion no longer requires raw SQL
+- **Admin-only endpoints** (Phase 5F-1 / 5F-2 / 5F-3):
   - `POST /api/challenges` — create challenge
   - `PATCH /api/challenges/:id` — update challenge
   - `DELETE /api/challenges/:id` — delete challenge
+  - `GET /api/admin/dashboard` — operational dashboard overview (5F-2)
+  - `GET /api/admin/users` — user list (5F-3)
+  - `GET /api/admin/users/:id` — user detail (5F-3)
+  - `PATCH /api/admin/users/:id/status` — account status change (5F-3)
+  - `PATCH /api/admin/users/:id/role` — role change (5F-3)
 - **User-accessible challenge endpoints** (not admin-only):
   - `GET /api/challenges` — list challenges
   - `GET /api/challenges/:id` — get challenge
@@ -541,7 +548,63 @@ channel.
   - `DELETE /api/challenges/:id/leave` — leave challenge
   - `GET /api/challenges/:id/progress` — get progress
   - `POST /api/challenges/:id/requirements/:requirementId/habit` — map requirement habit
-- **Frontend**: `RequireAdmin` route guard (`client/src/components/RequireAdmin.tsx`) for future admin pages; backend remains authoritative security boundary.
+- **Frontend**: `RequireAdmin` route guard (`client/src/components/RequireAdmin.tsx`) guards `/admin` (operational dashboard, 5F-2) and `/admin/users` (user management, 5F-3); backend remains authoritative security boundary.
+
+## Admin User Management (Phase 5F-3)
+
+- **Page**: `/admin/users` (lazy route behind `RequireAdmin`, linked from the
+  Admin dashboard) — debounced search, role/status filters, pagination,
+  detail dialog, confirm dialogs, mobile card layout, and self-protection
+  disables actions the admin cannot perform on their own account.
+- **API**: every endpoint runs `authenticate → requireAdmin → Zod validate →
+  controller → service`; registered centrally as
+  `app.use('/api/admin', adminUserRoutes)` in `server/src/app.ts`.
+  - `GET /api/admin/users` — strict query: `page` ≥ 1 (default 1),
+    `pageSize` 1–50 (default 10), `search` ≤ 100 chars, `role` in
+    `USER|ADMIN`, `status` in `ACTIVE|SUSPENDED|DEACTIVATED`; unknown
+    parameters → 400 `VALIDATION_ERROR`. Returns `{ items, pagination }`
+    with a safe summary per user (id, name, email, role, status, email
+    verification, last login, created/updated timestamps) — never
+    `passwordHash`, session/refresh hashes or tokens.
+  - `GET /api/admin/users/:id` — safe detail: profile fields plus
+    operational counts (transactions, goals, assets, liabilities, habits,
+    challenge participations) and nothing monetary; missing/malformed id →
+    404 `USER_NOT_FOUND` (same anti-enumeration shape as ownership 404s).
+  - `PATCH /api/admin/users/:id/status` — body `{ status }` only; strict.
+    Transitions: `ACTIVE ↔ SUSPENDED`, `ACTIVE → DEACTIVATED`,
+    `SUSPENDED → DEACTIVATED`, `DEACTIVATED → ACTIVE`;
+    `DEACTIVATED → SUSPENDED` → 409 `INVALID_STATUS_TRANSITION`;
+    same-status is an idempotent no-op (no revocation, no audit row).
+  - `PATCH /api/admin/users/:id/role` — body `{ role }` only; strict; role
+    changes require no session revocation because `authenticate` re-reads
+    role from the DB on every request.
+- **Session invalidation**: status changes to `SUSPENDED`/`DEACTIVATED`
+  revoke **all** of the target's unrevoked refresh sessions inside the same
+  `prisma.$transaction` as the status update and audit row. Afterwards
+  login → 403, authenticated API calls → 403, refresh with a revoked token →
+  401 (`detectRefreshTokenReuse`); reactivation lets the user log in again
+  with a fresh login. Pending one-time auth tokens are left alone — they
+  cannot grant access while `status ≠ ACTIVE`.
+- **Protections** (all server-side, tested with spoofed headers/query/body):
+  - self status change away from `ACTIVE` → 409 `ADMIN_SELF_STATUS_CHANGE`
+  - last-active-admin demotion → 409 `LAST_ADMIN_REQUIRED` (counts remaining
+    `ACTIVE` admins excluding the target, in-transaction)
+  - anonymous → 401, `USER` → 403, spoofed `role`/`X-User-Role`/`?role=`
+    parameters → rejected or ignored in favor of the JWT+DB value
+- **Audit**: `recordAuditEvent(event, client?)` in
+  `server/src/services/auditLogService.ts` writes `ADMIN_USER_STATUS_CHANGED`
+  and `ADMIN_USER_ROLE_CHANGED` rows atomically with the mutation (metadata:
+  ids, from/to, revoked session count; never credentials or financial
+  values). This is a minimal integration only — the audit-log query/UI is
+  Phase 5F-4.
+- **Data safety**: status/role changes touch only `users` rows, sessions and
+  audit rows — transactions, goals, assets, liabilities, habits and
+  challenge data are never deleted or modified (asserted by tests and
+  `e2e:admin-users`).
+- **Tests**: `server/tests/adminUser.test.ts` (backend, incl. RBAC,
+  transitions, session/refresh behavior, spoofing, sensitive-field
+  exclusion), `client/src/pages/AdminUsers.test.tsx` (frontend), and the
+  live `npm run e2e:admin-users --workspace=server` script.
 
 ## Design Principles
 

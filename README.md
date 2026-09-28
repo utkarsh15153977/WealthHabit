@@ -207,6 +207,8 @@ WealthHabit/
 | `npm run e2e:net-worth --workspace=server` | Live end-to-end check for net worth & snapshots (API must be running) |
 | `npm run e2e:wealth-analytics --workspace=server` | Live end-to-end check for the read-only wealth analytics API (API must be running) |
 | `npm run e2e:reports --workspace=server` | Live end-to-end check for the read-only financial reports API (API must be running) |
+| `npm run e2e:admin-dashboard --workspace=server` | Live end-to-end check for the admin operational dashboard (API must be running) |
+| `npm run e2e:admin-users --workspace=server` | Live end-to-end check for ADMIN user management (API must be running) |
 
 ## Testing
 
@@ -239,11 +241,13 @@ Live end-to-end checks (require the API running on `http://localhost:5000`,
 npm run e2e:assets --workspace=server            # 37 checks
 npm run e2e:net-worth --workspace=server         # 40 checks
 npm run e2e:wealth-analytics --workspace=server  # 81 checks
-npm run e2e:reports --workspace=server           # 81 checks
+npm run e2e:reports --workspace=server           # 72 checks
+npm run e2e:admin-dashboard --workspace=server   # 26 checks
+npm run e2e:admin-users --workspace=server       # 79 checks
 ```
 
-All three register throwaway users, exercise the API over HTTP and remove those
-users afterwards. `e2e:assets` covers asset/liability CRUD, balance updates,
+All of these register throwaway users, exercise the API over HTTP and remove
+those users afterwards. `e2e:assets` covers asset/liability CRUD, balance updates,
 derived `PAID_OFF` status, the summary (totals, counts and derived net worth),
 ownership 404s, and asserts that transactions and savings goals are untouched.
 `e2e:net-worth` covers the live net worth calculation (including a negative
@@ -256,7 +260,15 @@ liability composition, cash flow and category breakdowns, date-range filtering
 and rejection, per-user isolation, a negative net worth, and that reading
 analytics never writes a snapshot, notification, transaction, asset, goal or
 stored snapshot value — plus 404s for every write method and 400s for
-client-supplied financial values.
+client-supplied financial values. `e2e:admin-dashboard` covers the read-only
+admin operational overview (RBAC 401/403, spoofing, suspended/deactivated
+admins, no financial amounts exposed, no records created by reads).
+`e2e:admin-users` covers ADMIN user management end to end: list/search/filter,
+safe detail views, status transitions, session revocation and refresh
+rejection, role management, self-protection, last-admin protection, header and
+query spoofing, credential/financial-amount exclusion, financial records
+intact after status changes, plus cleanup of its throwaway users and audit
+entries.
 
 ## Current Status
 
@@ -421,5 +433,30 @@ Implemented:
   - Suspended/deactivated accounts blocked at auth layer (403)
   - **Admin-only endpoints**: `POST/PATCH/DELETE /api/challenges` (challenge management)
   - Frontend: `RequireAdmin` route guard for future admin pages
+- ✅ **Admin Dashboard** — `GET /api/admin/dashboard` (ADMIN-only operational
+  overview: user counts, record counts and application metrics) with the
+  `/admin` page behind `RequireAdmin` (loading/error/retry states, no
+  individual financial amounts exposed).
+- ✅ **Admin user management** — `/admin/users` page (behind `RequireAdmin`,
+  linked from the Admin dashboard) plus ADMIN-only API:
+  - `GET /api/admin/users` — paginated list (`page` ≥ 1, `pageSize` ≤ 50)
+    with `search` (name/email), `role` and `status` filters; strict query
+    validation rejects unknown parameters
+  - `GET /api/admin/users/:id` — safe detail with operational record counts
+    (transactions, goals, assets, liabilities, habits, challenges) and no
+    financial values
+  - `PATCH /api/admin/users/:id/status` — `ACTIVE`/`SUSPENDED`/`DEACTIVATED`
+    with supported-transition enforcement; suspending/deactivating revokes all
+    refresh sessions in the same transaction (login, API access and refresh
+    are all blocked afterwards; reactivation re-enables login)
+  - `PATCH /api/admin/users/:id/role` — dedicated role management
+    (`USER`/`ADMIN`) only; the profile API still rejects `role`
+  - Protections: anonymous → 401, `USER` → 403, self-suspension/self-
+    deactivation → 409, last-admin demotion → 409 (server-side count), header
+   /query/body spoofing → rejected, unknown fields → 400
+  - Credentials (`passwordHash`, refresh/session hashes, tokens) are never
+    returned; status/role changes never delete financial records; sensitive
+    mutations write `ADMIN_USER_STATUS_CHANGED`/`ADMIN_USER_ROLE_CHANGED`
+    audit entries (full audit-log UI remains Phase 5F-4)
 
-Next milestone: **to be planned** (Phases 1, 2, 3A–3C, 4A, 4B, 4C, 5A, 5B, 5C and 5D delivered)
+Next milestone: **to be planned** (Phases 1, 2, 3A–3C, 4A, 4B, 4C, 5A, 5B, 5C, 5D, 5F-1, 5F-2 and 5F-3 delivered)
