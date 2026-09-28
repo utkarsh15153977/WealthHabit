@@ -34,6 +34,7 @@ import adminDashboardRoutes from './routes/adminDashboardRoutes.js';
 import adminUserRoutes from './routes/adminUserRoutes.js';
 import adminChallengeRoutes from './routes/adminChallengeRoutes.js';
 import adminAuditLogRoutes from './routes/adminAuditLogRoutes.js';
+import adminSystemHealthRoutes from './routes/adminSystemHealthRoutes.js';
 
 const app = express();
 
@@ -78,6 +79,7 @@ app.use('/api/admin', adminDashboardRoutes);
 app.use('/api/admin', adminUserRoutes);
 app.use('/api/admin', adminChallengeRoutes);
 app.use('/api/admin', adminAuditLogRoutes);
+app.use('/api/admin', adminSystemHealthRoutes);
 
 app.use(notFoundHandler);
 app.use(errorHandler);

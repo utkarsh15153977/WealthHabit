@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
+  Activity,
   CreditCard,
   FileText,
   Landmark,
@@ -271,6 +272,14 @@ export function AdminDashboard() {
             >
               <FileText className="w-4 h-4" aria-hidden="true" />
               Audit log
+            </Link>
+            <Link
+              to="/admin/system-health"
+              className="btn-secondary btn-sm inline-flex items-center gap-2"
+              data-testid="admin-dashboard-system-health"
+            >
+              <Activity className="w-4 h-4" aria-hidden="true" />
+              System health
             </Link>
             <button
               type="button"

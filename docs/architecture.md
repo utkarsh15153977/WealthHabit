@@ -544,6 +544,7 @@ channel.
   - `GET /api/admin/audit-logs` — audit-log query, read-only (5F-4)
   - `GET /api/admin/challenges` — challenge list, read-only (5F-5)
   - `GET /api/admin/challenges/:id` — challenge detail, read-only (5F-5)
+  - `GET /api/admin/system-health` — operational health report, read-only (5F-6)
 - **User-accessible challenge endpoints** (not admin-only):
   - `GET /api/challenges` — list challenges
   - `GET /api/challenges/:id` — get challenge
@@ -551,7 +552,7 @@ channel.
   - `DELETE /api/challenges/:id/leave` — leave challenge
   - `GET /api/challenges/:id/progress` — get progress
   - `POST /api/challenges/:id/requirements/:requirementId/habit` — map requirement habit
-- **Frontend**: `RequireAdmin` route guard (`client/src/components/RequireAdmin.tsx`) guards `/admin` (operational dashboard, 5F-2), `/admin/users` (user management, 5F-3), `/admin/audit-logs` (audit log, 5F-4) and `/admin/challenges` (challenge administration, 5F-5); backend remains authoritative security boundary.
+- **Frontend**: `RequireAdmin` route guard (`client/src/components/RequireAdmin.tsx`) guards `/admin` (operational dashboard, 5F-2), `/admin/users` (user management, 5F-3), `/admin/audit-logs` (audit log, 5F-4), `/admin/challenges` (challenge administration, 5F-5) and `/admin/system-health` (system health, 5F-6); backend remains authoritative security boundary.
 
 ## Admin User Management (Phase 5F-3)
 
@@ -767,6 +768,82 @@ channel.
   (87 checks) — it cleans its challenge audit rows in `finally` (plus
   defensively at start) so the global audit total asserted by
   `e2e:admin-audit-logs` stays stable.
+
+## System Health (Phase 5F-6)
+
+- **Endpoint**: `GET /api/admin/system-health` in
+  `server/src/routes/adminSystemHealthRoutes.ts` — `authenticate →
+  requireAdmin → asyncHandler` (no query or body exists, so there is no
+  validation schema). Mounted centrally as `app.use('/api/admin',
+  adminSystemHealthRoutes)` in `server/src/app.ts`. Anonymous → 401,
+  `USER` → 403 (header/query/body role spoofing ignored — role always
+  comes from the JWT validated against the DB), suspended/deactivated
+  admins → 403 by the existing `authenticate` middleware. No new
+  authentication mechanism, no public route, no `/debug`, `/env` or
+  `/config` endpoint.
+- **Response contract** (stable allowlist — `{ success, data }` where
+  `data` has exactly `status`, `generatedAt`, `application`, `database`,
+  `runtime`):
+  - `application` — `{ status, service, environment, uptimeSeconds }`.
+    `service` is `"WealthHabit API"`, `environment` is a normalized
+    category (`development`/`test`/`production` from the already-configured
+    `NODE_ENV` — never the environment itself), and the status is `HEALTHY`
+    by construction because serving the request proves the process is up.
+  - `database` — `{ status, latencyMs, message }`. The only database
+    interaction of the feature is one read-only `SELECT 1` through the
+    existing Prisma singleton (`prisma.$queryRaw`), timed as
+    `latencyMs` — health-query latency only, not general application
+    latency. On failure the check is caught inside
+    `checkDatabaseHealth` and returned as
+    `{ status: 'UNHEALTHY', latencyMs: null, message: 'Database health
+    check failed' }`; the raw driver error (which may contain connection
+    strings) is never serialized — only a fixed line is logged
+    server-side. A database failure can therefore never crash the API or
+    leak through the response.
+  - `runtime` — `{ status, nodeVersion, uptimeSeconds, memory }` with
+    `nodeVersion` as `major.minor`, and `memory` as rounded one-decimal
+    `rssMb`/`heapUsedMb`/`heapTotalMb` summaries. No heap dumps, argv,
+    cwd, execPath, file descriptors or environment. Runtime status is
+    `DEGRADED` when `heapUsed / heapTotal >= MEMORY_DEGRADED_RATIO`
+    (0.95, a documented code constant), otherwise `HEALTHY`.
+- **Overall status** (deterministic aggregation in
+  `deriveOverallStatus`): any component `UNHEALTHY` → `UNHEALTHY` (the
+  database is a critical dependency, so a failed database check marks the
+  system unhealthy even though the API process is still serving); no
+  unhealthy component but at least one `DEGRADED` → `DEGRADED`; all
+  `HEALTHY` → `HEALTHY`.
+- **Not a liveness/readiness probe**: the endpoint answers HTTP 200 with
+  `status: 'UNHEALTHY'` when only the dependency check fails — it is an
+  operational dashboard read for administrators, not a Kubernetes
+  liveness/readiness endpoint and not external monitoring/observability.
+  No such infrastructure features exist in this project.
+- **Components**: only real dependencies are reported — application
+  process, PostgreSQL via Prisma, Node runtime. There is no Redis, Kafka,
+  S3, email, WebSocket or external-service check, and no financial
+  aggregation or user/challenge enumeration: exactly one lightweight
+  query plus O(1) process introspection per read.
+- **Read-only and unaudited**: health reads write no audit rows (the
+  5F-4 no-read-noise rule), no notifications and no application data of
+  any kind; the router registers GET only, so `POST`/`PATCH`/`DELETE`
+  fall through to the 404 handler.
+- **UI**: `/admin/system-health` (lazy route behind `RequireAdmin`, linked
+  from the Admin dashboard as "System health") — overall status badge,
+  Application/Database/Runtime cards with explicit
+  `HEALTHY`/`DEGRADED`/`UNHEALTHY` badges, latency, memory and uptime
+  summaries, last-checked timestamp, manual Refresh (no polling), and
+  loading/error/retry states. Malformed responses are rejected by a
+  structural guard in `client/src/services/adminSystemHealthApi.ts`
+  before rendering.
+- **Tests**: `server/tests/adminSystemHealth.test.ts` (authorization,
+  spoofing, exact response-shape allowlists, live database health,
+  injected-runner and HTTP-path failure simulation via a spied
+  `$queryRaw`, sensitive-field/path/stack absence, read-only counts,
+  runtime fields, aggregation rules) and
+  `client/src/pages/AdminSystemHealth.test.tsx` (loading/healthy/
+  degraded/unhealthy states, component displays, refresh, error+retry,
+  `RequireAdmin` access, out-of-schema values never rendered). Live:
+  `npm run e2e:admin-system-health --workspace=server` (67 checks against
+  the running API).
 
 ## Design Principles
 

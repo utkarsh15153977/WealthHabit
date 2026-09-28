@@ -211,6 +211,7 @@ WealthHabit/
 | `npm run e2e:admin-users --workspace=server` | Live end-to-end check for ADMIN user management (API must be running) |
 | `npm run e2e:admin-audit-logs --workspace=server` | Live end-to-end check for ADMIN audit-log management (API must be running) |
 | `npm run e2e:admin-challenges --workspace=server` | Live end-to-end check for ADMIN challenge management (API must be running) |
+| `npm run e2e:admin-system-health --workspace=server` | Live end-to-end check for ADMIN system health (API must be running) |
 
 ## Testing
 
@@ -248,6 +249,7 @@ npm run e2e:admin-dashboard --workspace=server   # 26 checks
 npm run e2e:admin-users --workspace=server       # 79 checks
 npm run e2e:admin-audit-logs --workspace=server  # 71 checks
 npm run e2e:admin-challenges --workspace=server  # 87 checks
+npm run e2e:admin-system-health --workspace=server  # 67 checks
 ```
 
 All of these register throwaway users, exercise the API over HTTP and remove
@@ -287,6 +289,14 @@ DELETED` audit events with their metadata, challenge deletion cascading only
 to mappings (financial habits and their completions survive), and cleanup of
 its throwaway challenges, users and audit entries so the global audit-log
 total asserted by `e2e:admin-audit-logs` stays stable.
+`e2e:admin-system-health` reads `GET /api/admin/system-health` as an ADMIN
+and verifies the allowlisted response contract (application/database/runtime
+sections, derived overall status, fresh `generatedAt`, numeric health-query
+latency, safe memory/node summaries), that no secret values, environment
+keys, tokens, filesystem paths or stack frames appear, that anonymous/USER/
+spoofed-header access is rejected (401/403), and that repeated health reads
+change no audit-log, user, notification or financial record counts — plus
+POST/PATCH/DELETE all 404. It never breaks PostgreSQL.
 
 ## Current Status
 
@@ -522,5 +532,30 @@ Implemented:
     dialog (requirements, participant counts), RHF create/edit form with a
     requirements editor, delete confirmation and
     loading/error/empty/no-results states
+- ✅ **System health** — `/admin/system-health` page (behind `RequireAdmin`,
+  linked from the Admin dashboard) plus the ADMIN-only, read-only
+  `GET /api/admin/system-health` operational health report:
+  - Components actually present in the app: **application** (service name,
+    `development`/`test`/`production` category, uptime), **database**
+    (one read-only `SELECT 1` through the existing Prisma connection with
+    `latencyMs` for that query only) and **runtime** (Node major.minor,
+    uptime, rounded `rssMb`/`heapUsedMb`/`heapTotalMb`); overall status is
+    derived deterministically — any component `UNHEALTHY` → `UNHEALTHY`
+    (the database is a critical dependency), else any `DEGRADED` →
+    `DEGRADED`, else `HEALTHY`; runtime is `DEGRADED` at ≥ 95% heap use
+    (documented constant)
+  - The endpoint stays HTTP 200 with `status: "UNHEALTHY"` when only the
+    database check fails — it is an admin dashboard read, not a
+    liveness/readiness probe; failures return a fixed
+    `"Database health check failed"` message, never raw driver errors
+  - Security: a strict allowlisted schema only — no `DATABASE_URL`,
+    `JWT_SECRET`, tokens, cookies, hashes, environment values, filesystem
+    paths, stack traces, process internals or financial data; exactly one
+    lightweight query per read (no table scans, no aggregations)
+  - Read-only and unaudited: health reads never write audit rows or any
+    application data, and only GET is registered (POST/PATCH/DELETE → 404)
+  - UI: overall status badge, Application/Database/Runtime cards with
+    explicit `HEALTHY`/`DEGRADED`/`UNHEALTHY` badges, last-checked
+    timestamp, manual Refresh, and loading/error/retry states
 
-Next milestone: **to be planned** (Phases 1, 2, 3A–3C, 4A, 4B, 4C, 5A, 5B, 5C, 5D, 5F-1, 5F-2, 5F-3, 5F-4 and 5F-5 delivered)
+Next milestone: **to be planned** (Phases 1, 2, 3A–3C, 4A, 4B, 4C, 5A, 5B, 5C, 5D, 5F-1, 5F-2, 5F-3, 5F-4, 5F-5 and 5F-6 delivered)

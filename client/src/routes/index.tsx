@@ -55,6 +55,10 @@ const AdminChallenges = lazy(() =>
   import('../pages/AdminChallenges').then((m) => ({ default: m.AdminChallenges }))
 );
 
+const AdminSystemHealth = lazy(() =>
+  import('../pages/AdminSystemHealth').then((m) => ({ default: m.AdminSystemHealth }))
+);
+
 export const routes: RouteObject[] = [
   {
     path: '/',
@@ -228,6 +232,14 @@ export const routes: RouteObject[] = [
       </RequireAdmin>
     ),
   },
+  {
+    path: '/admin/system-health',
+    element: (
+      <RequireAdmin>
+        {createElement(WithSuspense(AdminSystemHealth))}
+      </RequireAdmin>
+    ),
+  },
 ];
 
 export const publicRoutes = ['/', '/login', '/register'];
@@ -251,4 +263,5 @@ export const protectedRoutes = [
   '/admin/users',
   '/admin/audit-logs',
   '/admin/challenges',
+  '/admin/system-health',
 ];
