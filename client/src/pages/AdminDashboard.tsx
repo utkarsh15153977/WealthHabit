@@ -256,6 +256,14 @@ export function AdminDashboard() {
               <Users className="w-4 h-4" aria-hidden="true" />
               Manage users
             </Link>
+            <Link
+              to="/admin/audit-logs"
+              className="btn-secondary btn-sm inline-flex items-center gap-2"
+              data-testid="admin-dashboard-audit-logs"
+            >
+              <FileText className="w-4 h-4" aria-hidden="true" />
+              Audit log
+            </Link>
             <button
               type="button"
               className="btn-secondary btn-sm inline-flex items-center gap-2"

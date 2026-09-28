@@ -541,6 +541,7 @@ channel.
   - `GET /api/admin/users/:id` — user detail (5F-3)
   - `PATCH /api/admin/users/:id/status` — account status change (5F-3)
   - `PATCH /api/admin/users/:id/role` — role change (5F-3)
+  - `GET /api/admin/audit-logs` — audit-log query, read-only (5F-4)
 - **User-accessible challenge endpoints** (not admin-only):
   - `GET /api/challenges` — list challenges
   - `GET /api/challenges/:id` — get challenge
@@ -548,7 +549,7 @@ channel.
   - `DELETE /api/challenges/:id/leave` — leave challenge
   - `GET /api/challenges/:id/progress` — get progress
   - `POST /api/challenges/:id/requirements/:requirementId/habit` — map requirement habit
-- **Frontend**: `RequireAdmin` route guard (`client/src/components/RequireAdmin.tsx`) guards `/admin` (operational dashboard, 5F-2) and `/admin/users` (user management, 5F-3); backend remains authoritative security boundary.
+- **Frontend**: `RequireAdmin` route guard (`client/src/components/RequireAdmin.tsx`) guards `/admin` (operational dashboard, 5F-2), `/admin/users` (user management, 5F-3) and `/admin/audit-logs` (audit log, 5F-4); backend remains authoritative security boundary.
 
 ## Admin User Management (Phase 5F-3)
 
@@ -605,6 +606,81 @@ channel.
   transitions, session/refresh behavior, spoofing, sensitive-field
   exclusion), `client/src/pages/AdminUsers.test.tsx` (frontend), and the
   live `npm run e2e:admin-users --workspace=server` script.
+
+## Audit Log Management (Phase 5F-4)
+
+- **Model** (existing, no migration): `AuditLog` in `prisma/schema.prisma`
+  maps to `audit_logs` — `id` (cuid), `actorUserId` (nullable FK → `User`,
+  `onDelete: SetNull`, relation `actorAuditLogs`), `action` (String),
+  `entityType` (String), `entityId` (String, nullable, no FK), `metadata`
+  (Json, nullable), `createdAt` (default `now()`). Indexes on `actorUserId`,
+  `entityType`, `entityId`, `createdAt`. There is no `target` relation — for
+  user-management events `entityType = "User"` and `entityId` is the target
+  user id (also duplicated inside `metadata.targetUserId`).
+- **Writer (reused, not replaced)**: `recordAuditEvent(event, client?)` in
+  `server/src/services/auditLogService.ts` remains the single audit writer.
+  `AuditActions` is the authoritative action set:
+  - `ADMIN_USER_STATUS_CHANGED` — metadata `{ targetUserId, from, to,
+    revokedSessions }`, written inside the same transaction as the status
+    update and session revocations (5F-3).
+  - `ADMIN_USER_ROLE_CHANGED` — metadata `{ targetUserId, from, to }`,
+    written inside the same transaction as the role update (5F-3).
+  5F-4 adds no new writers and no reads that write (no recursive
+  audit-of-audit entries).
+- **API**: `GET /api/admin/audit-logs` with
+  `authenticate → requireAdmin → validate(listAuditLogsSchema) →
+  asyncHandler`, mounted in `server/src/app.ts` alongside the other admin
+  routers. The router defines GET only — `POST`/`PUT`/`PATCH`/`DELETE` fall
+  through to the 404 handler, so audit rows cannot be created, edited or
+  deleted through the application.
+- **Query contract** (strict Zod — unknown parameters → 400
+  `VALIDATION_ERROR`):
+  - `page` ≥ 1 (default 1), `pageSize` 1–50 (default 20)
+  - `action` — one of the `AuditActions` values (enum derived from those
+    constants; `AuditLog.action` itself is a String column)
+  - `actorUserId` / `entityId` — cuid-shaped (`/^c[a-z0-9]{10,40}$/`);
+    `entityId` filters the target resource id
+  - `dateFrom` / `dateTo` — ISO dates coerced to UTC calendar days;
+    `createdAt >= startOfUtcDay(dateFrom)` and `< startOfUtcDay(dateTo) + 1
+    day` (dateTo inclusive); reversed ranges and ranges over 1825 days are
+    rejected; malformed dates are rejected
+  - `search` (≤ 100 chars) — case-insensitive match on actor first/last
+    name or email (relation filter), action substring, or target id
+    resolved through a bounded user lookup (max 1000 matching users).
+    Metadata/JSON full-text search is intentionally **not** supported (it
+    would require raw SQL or a migration).
+  - No client-supplied sort: always `createdAt DESC, id DESC`.
+- **Response**: `{ success, data: { auditLogs, page, pageSize, total,
+  totalPages } }`. Each entry is
+  `{ id, action, entityType, entityId, actor, target, metadata, createdAt }`
+  where `actor`/`target` are `{ id, email, firstName, lastName } | null`
+  (actor from the FK, target resolved in one batched query from `entityId`;
+  a deleted actor or unknown target yields `null` instead of failing the
+  page). Actor/target user records are selected by field list — never full
+  rows, never `passwordHash` or session/token columns.
+- **Metadata sanitization**: before any metadata leaves the server it is
+  reshaped by `sanitizeAuditMetadata` — keys matching
+  `password|secret|token|hash|cookie|authorization|credential|api[-_]?key|
+  private|jwt|bearer` are dropped, depth is capped at 4, strings at 500
+  chars, arrays at 50 items and objects at 50 keys. The response contract is
+  therefore stable and credential-free even if a future writer stores more
+  than the current transition fields. Financial amounts never appear in
+  audit metadata.
+- **UI**: `/admin/audit-logs` (lazy route behind `RequireAdmin`, linked from
+  the Admin dashboard) — debounced search over actor/target names and email,
+  action select derived from `AUDIT_ACTIONS`, actor/target id inputs, date
+  inputs with explicit Apply/Clear, desktop table and mobile cards
+  (Timestamp | Action | Actor | Target | Details), a read-only detail dialog
+  (action, formatted + ISO timestamp, actor, target, entity, pretty-printed
+  metadata), loading/error/retry/empty/no-results states and Previous/Next
+  pagination. The page performs no mutations at all.
+- **Tests**: `server/tests/adminAuditLogs.test.ts` (RBAC, spoofing, strict
+  validation, pagination/ordering, filters, search, sanitization,
+  immutability, live 5F-3 events, missing actor/target robustness),
+  `client/src/pages/AdminAuditLogs.test.tsx` (page states, filters,
+  pagination, detail dialog, sensitive-field absence, `RequireAdmin`
+  access), and `npm run e2e:admin-audit-logs --workspace=server` (71 checks
+  against the running API).
 
 ## Design Principles
 

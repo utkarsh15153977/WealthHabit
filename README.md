@@ -209,6 +209,7 @@ WealthHabit/
 | `npm run e2e:reports --workspace=server` | Live end-to-end check for the read-only financial reports API (API must be running) |
 | `npm run e2e:admin-dashboard --workspace=server` | Live end-to-end check for the admin operational dashboard (API must be running) |
 | `npm run e2e:admin-users --workspace=server` | Live end-to-end check for ADMIN user management (API must be running) |
+| `npm run e2e:admin-audit-logs --workspace=server` | Live end-to-end check for ADMIN audit-log management (API must be running) |
 
 ## Testing
 
@@ -244,6 +245,7 @@ npm run e2e:wealth-analytics --workspace=server  # 81 checks
 npm run e2e:reports --workspace=server           # 72 checks
 npm run e2e:admin-dashboard --workspace=server   # 26 checks
 npm run e2e:admin-users --workspace=server       # 79 checks
+npm run e2e:admin-audit-logs --workspace=server  # 71 checks
 ```
 
 All of these register throwaway users, exercise the API over HTTP and remove
@@ -268,7 +270,11 @@ safe detail views, status transitions, session revocation and refresh
 rejection, role management, self-protection, last-admin protection, header and
 query spoofing, credential/financial-amount exclusion, financial records
 intact after status changes, plus cleanup of its throwaway users and audit
-entries.
+entries. `e2e:admin-audit-logs` generates real status/role audit events,
+then verifies RBAC, strict validation, newest-first pagination, action/actor/
+target/date/search filters, actor and target resolution, sanitized metadata,
+credential and financial-amount exclusion, and that the audit-log API is
+strictly read-only (DELETE/PUT/PATCH/POST all 404, row counts unchanged).
 
 ## Current Status
 
@@ -458,5 +464,26 @@ Implemented:
     returned; status/role changes never delete financial records; sensitive
     mutations write `ADMIN_USER_STATUS_CHANGED`/`ADMIN_USER_ROLE_CHANGED`
     audit entries (full audit-log UI remains Phase 5F-4)
+- ✅ **Audit log management** — `/admin/audit-logs` page (behind
+  `RequireAdmin`, linked from the Admin dashboard) plus the ADMIN-only,
+  read-only API `GET /api/admin/audit-logs`:
+  - Strict query: `page` ≥ 1, `pageSize` ≤ 50, `action` (only the known
+    `AuditActions` values), `actorUserId`/`entityId` (cuid-shaped ids),
+    `dateFrom`/`dateTo` (UTC calendar days, inclusive, ≤ 1825 days, no
+    reversed ranges), `search` (actor/target name or email, action
+    substring); unknown parameters → 400
+  - Newest-first ordering (`createdAt` DESC, `id` DESC), `findMany + count`
+    with a single batched target lookup — no N+1 queries
+  - Safe response: id/action/entityType/entityId/createdAt, `actor` and
+    `target` (`id`/`email`/`firstName`/`lastName`, `null` when deleted or
+    unknown) and **sanitized metadata** (credential-shaped keys stripped,
+    depth/size bounded) — no passwords, hashes, tokens, cookies or
+    financial values
+  - Strictly immutable: no POST/PUT/PATCH/DELETE endpoints exist and reads
+    never write audit entries (no recursive audit-of-audit)
+  - UI: search, action select (derived from the known action set), actor/
+    target id and date filters with Apply/Clear, desktop table + mobile
+    cards, detail dialog (action, timestamp, actor, target, formatted
+    metadata), loading/error/retry/empty/no-results states and pagination
 
-Next milestone: **to be planned** (Phases 1, 2, 3A–3C, 4A, 4B, 4C, 5A, 5B, 5C, 5D, 5F-1, 5F-2 and 5F-3 delivered)
+Next milestone: **to be planned** (Phases 1, 2, 3A–3C, 4A, 4B, 4C, 5A, 5B, 5C, 5D, 5F-1, 5F-2, 5F-3 and 5F-4 delivered)
