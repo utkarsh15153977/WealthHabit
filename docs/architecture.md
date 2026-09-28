@@ -816,7 +816,11 @@ channel.
   `status: 'UNHEALTHY'` when only the dependency check fails — it is an
   operational dashboard read for administrators, not a Kubernetes
   liveness/readiness endpoint and not external monitoring/observability.
-  No such infrastructure features exist in this project.
+  No such infrastructure features exist in this project. This is strictly
+  application-level operational health: it does not provide Kubernetes
+  health probes, Prometheus metrics, Grafana dashboards, external uptime
+  monitoring or automatic alerting, and it performs no automatic
+  remediation.
 - **Components**: only real dependencies are reported — application
   process, PostgreSQL via Prisma, Node runtime. There is no Redis, Kafka,
   S3, email, WebSocket or external-service check, and no financial

@@ -557,5 +557,8 @@ Implemented:
   - UI: overall status badge, Application/Database/Runtime cards with
     explicit `HEALTHY`/`DEGRADED`/`UNHEALTHY` badges, last-checked
     timestamp, manual Refresh, and loading/error/retry states
+  - Scope: application-level operational health only — it does not provide
+    Kubernetes health probes, Prometheus metrics, Grafana monitoring,
+    external uptime monitoring or automatic alerting
 
 Next milestone: **to be planned** (Phases 1, 2, 3A–3C, 4A, 4B, 4C, 5A, 5B, 5C, 5D, 5F-1, 5F-2, 5F-3, 5F-4, 5F-5 and 5F-6 delivered)
