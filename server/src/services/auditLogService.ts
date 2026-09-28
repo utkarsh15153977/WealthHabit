@@ -4,6 +4,9 @@ import { prisma } from '../config/prisma.js';
 export const AuditActions = {
   ADMIN_USER_STATUS_CHANGED: 'ADMIN_USER_STATUS_CHANGED',
   ADMIN_USER_ROLE_CHANGED: 'ADMIN_USER_ROLE_CHANGED',
+  ADMIN_CHALLENGE_CREATED: 'ADMIN_CHALLENGE_CREATED',
+  ADMIN_CHALLENGE_UPDATED: 'ADMIN_CHALLENGE_UPDATED',
+  ADMIN_CHALLENGE_DELETED: 'ADMIN_CHALLENGE_DELETED',
 } as const;
 
 export type AuditAction = (typeof AuditActions)[keyof typeof AuditActions];
@@ -19,8 +22,8 @@ export interface AuditEventInput {
 }
 
 /**
- * Minimal audit-log writer used by admin user management.
- * The full audit-log querying/UI surface remains Phase 5F-4.
+ * Minimal audit-log writer used by admin user management and admin
+ * challenge administration. Reading never writes (no audit-of-audit).
  * Never pass credentials, tokens or secrets as metadata.
  */
 export async function recordAuditEvent(

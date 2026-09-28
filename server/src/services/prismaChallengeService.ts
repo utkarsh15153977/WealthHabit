@@ -2,6 +2,7 @@ import { Challenge, ChallengeParticipant, Prisma } from '@prisma/client';
 import { prisma } from '../config/prisma.js';
 import { startOfUtcDay } from '../utils/date.js';
 import { calculateChallengeProgress } from '../utils/challengeProgress.js';
+import { AuditActions, recordAuditEvent } from './auditLogService.js';
 import {
   CreateChallengeInput,
   ListChallengesQuery,
@@ -12,6 +13,10 @@ import type {
   ChallengeRequirementData,
   ChallengeStatusData,
 } from '../types/challenge.js';
+
+function utcDayIso(date: Date): string {
+  return startOfUtcDay(date).toISOString().slice(0, 10);
+}
 
 export type ChallengeWithRequirements = Prisma.ChallengeGetPayload<{
   include: { requirements: true };
@@ -99,56 +104,146 @@ export async function findChallenge(id: string): Promise<ChallengeWithRequiremen
   });
 }
 
+/**
+ * Admin challenge creation writes the mutation and its audit event in one
+ * transaction, so the audit trail can never disagree with the database.
+ */
 export async function createChallenge(
-  input: CreateChallengeInput
+  input: CreateChallengeInput,
+  actorUserId: string
 ): Promise<ChallengeWithRequirements> {
-  return prisma.challenge.create({
-    data: {
-      name: input.name,
-      description: input.description ?? '',
-      category: input.category ?? 'general',
-      difficulty: input.difficulty ?? 'MEDIUM',
-      points: input.points ?? 0,
-      startDate: input.startDate,
-      endDate: input.endDate,
-      requirements: {
-        create: input.requirements.map((requirement) => ({
-          name: requirement.name,
-          description: requirement.description ?? null,
-          frequency: requirement.frequency,
-          target: requirement.target ?? 1,
-          unit: requirement.unit ?? null,
-        })),
+  return prisma.$transaction(async (tx) => {
+    const challenge = await tx.challenge.create({
+      data: {
+        name: input.name,
+        description: input.description ?? '',
+        category: input.category ?? 'general',
+        difficulty: input.difficulty ?? 'MEDIUM',
+        points: input.points ?? 0,
+        startDate: input.startDate,
+        endDate: input.endDate,
+        requirements: {
+          create: input.requirements.map((requirement) => ({
+            name: requirement.name,
+            description: requirement.description ?? null,
+            frequency: requirement.frequency,
+            target: requirement.target ?? 1,
+            unit: requirement.unit ?? null,
+          })),
+        },
       },
-    },
-    include: { requirements: { orderBy: { createdAt: 'asc' } } },
+      include: { requirements: { orderBy: { createdAt: 'asc' } } },
+    });
+
+    await recordAuditEvent(
+      {
+        actorUserId,
+        action: AuditActions.ADMIN_CHALLENGE_CREATED,
+        entityType: 'Challenge',
+        entityId: challenge.id,
+        metadata: {
+          name: challenge.name,
+          type: challenge.type,
+          category: challenge.category,
+          startDate: utcDayIso(challenge.startDate),
+          endDate: utcDayIso(challenge.endDate),
+          requirementCount: challenge.requirements.length,
+          isActive: challenge.isActive,
+        },
+      },
+      tx
+    );
+
+    return challenge;
   });
 }
 
 export async function updateChallenge(
   challenge: ChallengeWithRequirements,
-  input: UpdateChallengeInput
+  input: UpdateChallengeInput,
+  actorUserId: string
 ): Promise<ChallengeWithRequirements> {
-  const data: Prisma.ChallengeUpdateInput = {};
+  return prisma.$transaction(async (tx) => {
+    const data: Prisma.ChallengeUpdateInput = {};
 
-  if (input.name !== undefined) data.name = input.name;
-  if (input.description !== undefined) data.description = input.description;
-  if (input.category !== undefined) data.category = input.category;
-  if (input.difficulty !== undefined) data.difficulty = input.difficulty;
-  if (input.points !== undefined) data.points = input.points;
-  if (input.startDate !== undefined) data.startDate = input.startDate;
-  if (input.endDate !== undefined) data.endDate = input.endDate;
-  if (input.isActive !== undefined) data.isActive = input.isActive;
+    if (input.name !== undefined) data.name = input.name;
+    if (input.description !== undefined) data.description = input.description;
+    if (input.category !== undefined) data.category = input.category;
+    if (input.difficulty !== undefined) data.difficulty = input.difficulty;
+    if (input.points !== undefined) data.points = input.points;
+    if (input.startDate !== undefined) data.startDate = input.startDate;
+    if (input.endDate !== undefined) data.endDate = input.endDate;
+    if (input.isActive !== undefined) data.isActive = input.isActive;
 
-  return prisma.challenge.update({
-    where: { id: challenge.id },
-    data,
-    include: { requirements: { orderBy: { createdAt: 'asc' } } },
+    const updated = await tx.challenge.update({
+      where: { id: challenge.id },
+      data,
+      include: { requirements: { orderBy: { createdAt: 'asc' } } },
+    });
+
+    // Operational metadata only: which fields changed, plus the activation
+    // transition when it changed. Activation is a normal PATCH field, so it
+    // is audited as ADMIN_CHALLENGE_UPDATED rather than a redundant action.
+    const changedFields = Object.keys(input);
+    const activationChanged =
+      input.isActive !== undefined && input.isActive !== challenge.isActive;
+    const metadata: Prisma.InputJsonObject = activationChanged
+      ? {
+          name: updated.name,
+          changedFields,
+          previousIsActive: challenge.isActive,
+          newIsActive: input.isActive,
+        }
+      : { name: updated.name, changedFields };
+
+    await recordAuditEvent(
+      {
+        actorUserId,
+        action: AuditActions.ADMIN_CHALLENGE_UPDATED,
+        entityType: 'Challenge',
+        entityId: challenge.id,
+        metadata,
+      },
+      tx
+    );
+
+    return updated;
   });
 }
 
-export async function deleteChallenge(id: string): Promise<void> {
-  await prisma.challenge.delete({ where: { id } });
+/**
+ * Deletion uses the schema's own cascade rules (requirements, participants
+ * and requirement→habit mappings cascade; user FinancialHabits are the
+ * referenced side of a mapping and are never deleted). The audit event is
+ * written in the same transaction, after counting participants from the
+ * still-consistent state.
+ */
+export async function deleteChallenge(
+  challenge: Pick<Challenge, 'id' | 'name' | 'type'>,
+  actorUserId: string
+): Promise<void> {
+  await prisma.$transaction(async (tx) => {
+    const participantCount = await tx.challengeParticipant.count({
+      where: { challengeId: challenge.id },
+    });
+
+    await tx.challenge.delete({ where: { id: challenge.id } });
+
+    await recordAuditEvent(
+      {
+        actorUserId,
+        action: AuditActions.ADMIN_CHALLENGE_DELETED,
+        entityType: 'Challenge',
+        entityId: challenge.id,
+        metadata: {
+          name: challenge.name,
+          type: challenge.type,
+          participants: participantCount,
+        },
+      },
+      tx
+    );
+  });
 }
 
 function activeWindowFilter(today: Date): Prisma.ChallengeWhereInput {

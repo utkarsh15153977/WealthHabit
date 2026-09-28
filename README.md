@@ -210,6 +210,7 @@ WealthHabit/
 | `npm run e2e:admin-dashboard --workspace=server` | Live end-to-end check for the admin operational dashboard (API must be running) |
 | `npm run e2e:admin-users --workspace=server` | Live end-to-end check for ADMIN user management (API must be running) |
 | `npm run e2e:admin-audit-logs --workspace=server` | Live end-to-end check for ADMIN audit-log management (API must be running) |
+| `npm run e2e:admin-challenges --workspace=server` | Live end-to-end check for ADMIN challenge management (API must be running) |
 
 ## Testing
 
@@ -246,6 +247,7 @@ npm run e2e:reports --workspace=server           # 72 checks
 npm run e2e:admin-dashboard --workspace=server   # 26 checks
 npm run e2e:admin-users --workspace=server       # 79 checks
 npm run e2e:admin-audit-logs --workspace=server  # 71 checks
+npm run e2e:admin-challenges --workspace=server  # 87 checks
 ```
 
 All of these register throwaway users, exercise the API over HTTP and remove
@@ -275,6 +277,16 @@ then verifies RBAC, strict validation, newest-first pagination, action/actor/
 target/date/search filters, actor and target resolution, sanitized metadata,
 credential and financial-amount exclusion, and that the audit-log API is
 strictly read-only (DELETE/PUT/PATCH/POST all 404, row counts unchanged).
+`e2e:admin-challenges` creates two controlled challenges, then verifies
+RBAC/spoofing, strict create and query validation, the admin list/detail
+contract (safe fields, search, type/status/activation/startDate filters,
+derived status), the participant flow (join, habit mapping and completion
+reflected as derived `{total, completed}` stats), the activation round-trip,
+requirement immutability after creation, `ADMIN_CHALLENGE_CREATED/UPDATED/
+DELETED` audit events with their metadata, challenge deletion cascading only
+to mappings (financial habits and their completions survive), and cleanup of
+its throwaway challenges, users and audit entries so the global audit-log
+total asserted by `e2e:admin-audit-logs` stays stable.
 
 ## Current Status
 
@@ -485,5 +497,30 @@ Implemented:
     target id and date filters with Apply/Clear, desktop table + mobile
     cards, detail dialog (action, timestamp, actor, target, formatted
     metadata), loading/error/retry/empty/no-results states and pagination
+- ✅ **Challenge administration** — `/admin/challenges` page (behind
+  `RequireAdmin`, linked from the Admin dashboard) plus the ADMIN-only,
+  read-only API for challenge data:
+  - `GET /api/admin/challenges` — paginated list (`page` ≥ 1, `pageSize` ≤ 50)
+    with `search` (name/description/category), `type`, derived `status`
+    (`UPCOMING`/`ACTIVE`/`ENDED`), persisted `active` and
+    `dateFrom`/`dateTo` startDate filters (UTC calendar days, inclusive,
+    ≤ 1825 days, no reversed ranges); strict query rejects unknown
+    parameters; newest-startDate ordering matches the public list
+  - `GET /api/admin/challenges/:id` — detail with ordered requirements
+    (including per-requirement `mappedParticipants`) and derived participant
+    stats `{ total, completed }` computed by the existing batched
+    progress machinery (4 flat queries, nothing persisted)
+  - Mutations reuse the existing admin-protected `POST/PATCH/DELETE
+    /api/challenges` routes; each now writes `ADMIN_CHALLENGE_CREATED` /
+    `ADMIN_CHALLENGE_UPDATED` / `ADMIN_CHALLENGE_DELETED` audit entries in
+    the same transaction (activation is audited as `UPDATED` with
+    `previousIsActive`/`newIsActive`); requirements remain immutable after
+    creation (1–10 on create)
+  - Protections: anonymous → 401, `USER` → 403 (including header/query
+    spoofing), unknown ids → 404, unknown query parameters → 400
+  - UI: search, filters, desktop table + mobile cards, pagination, detail
+    dialog (requirements, participant counts), RHF create/edit form with a
+    requirements editor, delete confirmation and
+    loading/error/empty/no-results states
 
-Next milestone: **to be planned** (Phases 1, 2, 3A–3C, 4A, 4B, 4C, 5A, 5B, 5C, 5D, 5F-1, 5F-2, 5F-3 and 5F-4 delivered)
+Next milestone: **to be planned** (Phases 1, 2, 3A–3C, 4A, 4B, 4C, 5A, 5B, 5C, 5D, 5F-1, 5F-2, 5F-3, 5F-4 and 5F-5 delivered)

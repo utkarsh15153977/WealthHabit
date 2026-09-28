@@ -131,7 +131,7 @@ export async function createChallengeHandler(
 ): Promise<void> {
   const userId = getAuthenticatedUserId(req);
   const body = req.body as CreateChallengeInput;
-  const challenge = await createChallenge(body);
+  const challenge = await createChallenge(body, userId);
 
   const data = await buildChallengeData(challenge, userId);
   res.status(201).json({ success: true, data: { challenge: data } });
@@ -166,7 +166,7 @@ export async function updateChallengeHandler(
     });
   }
 
-  const updated = await updateChallenge(challenge, body);
+  const updated = await updateChallenge(challenge, body, userId);
   const data = await buildChallengeData(updated, userId);
   res.json({ success: true, data: { challenge: data } });
 }
@@ -175,10 +175,11 @@ export async function deleteChallengeHandler(
   req: AuthenticatedRequest,
   res: Response
 ): Promise<void> {
+  const userId = getAuthenticatedUserId(req);
   const { id } = req.params as { id: string };
   const challenge = await requireChallenge(id);
 
-  await deleteChallenge(challenge.id);
+  await deleteChallenge(challenge, userId);
   const data: ChallengeDeleteData = { message: 'Challenge deleted' };
   res.json({ success: true, data });
 }

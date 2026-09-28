@@ -21,6 +21,7 @@
     "e2e:admin-dashboard": "tsx scripts/e2eAdminDashboard.ts",
     "e2e:admin-users": "tsx scripts/e2eAdminUsers.ts",
     "e2e:admin-audit-logs": "tsx scripts/e2eAdminAuditLogs.ts",
+    "e2e:admin-challenges": "tsx scripts/e2eAdminChallenges.ts",
     "test": "vitest run",
     "test:watch": "vitest"
   },

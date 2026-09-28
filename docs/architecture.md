@@ -532,7 +532,7 @@ channel.
   - No public role-management API; role changes only via the ADMIN-only
     `PATCH /api/admin/users/:id/role` operation (Phase 5F-3); `ADMIN`
     promotion no longer requires raw SQL
-- **Admin-only endpoints** (Phase 5F-1 / 5F-2 / 5F-3):
+- **Admin-only endpoints** (Phase 5F-1 / 5F-2 / 5F-3 / 5F-5):
   - `POST /api/challenges` — create challenge
   - `PATCH /api/challenges/:id` — update challenge
   - `DELETE /api/challenges/:id` — delete challenge
@@ -542,6 +542,8 @@ channel.
   - `PATCH /api/admin/users/:id/status` — account status change (5F-3)
   - `PATCH /api/admin/users/:id/role` — role change (5F-3)
   - `GET /api/admin/audit-logs` — audit-log query, read-only (5F-4)
+  - `GET /api/admin/challenges` — challenge list, read-only (5F-5)
+  - `GET /api/admin/challenges/:id` — challenge detail, read-only (5F-5)
 - **User-accessible challenge endpoints** (not admin-only):
   - `GET /api/challenges` — list challenges
   - `GET /api/challenges/:id` — get challenge
@@ -549,7 +551,7 @@ channel.
   - `DELETE /api/challenges/:id/leave` — leave challenge
   - `GET /api/challenges/:id/progress` — get progress
   - `POST /api/challenges/:id/requirements/:requirementId/habit` — map requirement habit
-- **Frontend**: `RequireAdmin` route guard (`client/src/components/RequireAdmin.tsx`) guards `/admin` (operational dashboard, 5F-2), `/admin/users` (user management, 5F-3) and `/admin/audit-logs` (audit log, 5F-4); backend remains authoritative security boundary.
+- **Frontend**: `RequireAdmin` route guard (`client/src/components/RequireAdmin.tsx`) guards `/admin` (operational dashboard, 5F-2), `/admin/users` (user management, 5F-3), `/admin/audit-logs` (audit log, 5F-4) and `/admin/challenges` (challenge administration, 5F-5); backend remains authoritative security boundary.
 
 ## Admin User Management (Phase 5F-3)
 
@@ -626,7 +628,12 @@ channel.
   - `ADMIN_USER_ROLE_CHANGED` — metadata `{ targetUserId, from, to }`,
     written inside the same transaction as the role update (5F-3).
   5F-4 adds no new writers and no reads that write (no recursive
-  audit-of-audit entries).
+  audit-of-audit entries). Phase 5F-5 later appends the three challenge
+  actions (`ADMIN_CHALLENGE_CREATED` / `ADMIN_CHALLENGE_UPDATED` /
+  `ADMIN_CHALLENGE_DELETED`) to this same set — documented in the
+  Challenge Administration section below; because the API's action filter
+  enum is derived from `Object.values(AuditActions)`, those actions are
+  automatically queryable through `GET /api/admin/audit-logs`.
 - **API**: `GET /api/admin/audit-logs` with
   `authenticate → requireAdmin → validate(listAuditLogsSchema) →
   asyncHandler`, mounted in `server/src/app.ts` alongside the other admin
@@ -681,6 +688,85 @@ channel.
   pagination, detail dialog, sensitive-field absence, `RequireAdmin`
   access), and `npm run e2e:admin-audit-logs --workspace=server` (71 checks
   against the running API).
+
+## Challenge Administration (Phase 5F-5)
+
+- **Reuses the existing Challenge stack** (no migration, no second model):
+  `Challenge` / `ChallengeHabitRequirement` / `ChallengeParticipant` /
+  `ChallengeParticipantHabit` in `prisma/schema.prisma` (participant→requirement
+  mappings cascade on delete; `FinancialHabit` rows never do), the shared
+  domain logic in `server/src/services/prismaChallengeService.ts`, the
+  admin-protected `POST/PATCH/DELETE /api/challenges` routes and the
+  `deriveChallengeStatus` / `calculateChallengeProgress` derived-status
+  machinery.
+- **Audit actions**: 5F-5 appends three values to `AuditActions` in
+  `server/src/services/auditLogService.ts`:
+  - `ADMIN_CHALLENGE_CREATED` — metadata `{ name, type, category,
+    startDate, endDate, requirementCount, isActive }` (dates as UTC day
+    strings).
+  - `ADMIN_CHALLENGE_UPDATED` — metadata `{ name, changedFields }` plus
+    `{ previousIsActive, newIsActive }` when the activation flipped.
+    Activation is an ordinary PATCH field, so it is audited as `UPDATED`
+    rather than a redundant status action.
+  - `ADMIN_CHALLENGE_DELETED` — metadata `{ name, type, participants }`.
+  Each mutation now runs inside `prisma.$transaction(async tx => { …;
+  recordAuditEvent(…, tx) })`, so the row and its audit entry commit
+  atomically (same pattern as `adminUserService.ts`); the controller passes
+  `getAuthenticatedUserId(req)` as the actor.
+- **Read API**: `GET /api/admin/challenges` and `GET /api/admin/challenges/:id`
+  in `server/src/routes/adminChallengeRoutes.ts` (GET only, `authenticate →
+  requireAdmin → validate → asyncHandler`), mounted centrally as
+  `app.use('/api/admin', adminChallengeRoutes)` in `server/src/app.ts`.
+  Mutations stay on the existing `/api/challenges` router — there is no
+  duplicate CRUD surface.
+  - List query (strict Zod, unknown parameters → 400): `page` ≥ 1 (default 1),
+    `pageSize` 1–50 (default 20), `search` ≤ 100 chars (case-insensitive
+    name/description/category), `type` (Prisma `ChallengeType` values),
+    `status` in `UPCOMING|ACTIVE|ENDED` (derived with the exact UTC
+    semantics of `deriveChallengeStatus`, so the filter and the returned
+    field can never disagree), `active` in `true|false` (persisted
+    activation: `true` is the live window, `false` its exact negation),
+    `dateFrom`/`dateTo` (UTC calendar days filtering `startDate`, dateTo
+    inclusive; reversed ranges and ranges over `ADMIN_CHALLENGE_MAX_RANGE_DAYS`
+    = 1825 days rejected). Filters are composed as `where.AND = clauses[]`
+    so status/activation OR-groups never clobber each other. Ordering:
+    `startDate DESC, createdAt DESC` (matches the public list).
+  - List item: the safe base fields (id, name, description, category,
+    difficulty, points, type, startDate, endDate, isActive, derived status,
+    timestamps) plus `requirementCount` and `participants: { total }` from
+    `_count` — never participant rows or credentials.
+  - Detail: base fields plus ordered requirements (each with
+    `mappedParticipants` from `_count.mappings`) and derived
+    `participants: { total, completed }` computed by
+    `computeParticipantStats` — 4 flat batched queries (participants,
+    mappings, habits, completions) feeding the existing pure
+    `calculateChallengeProgress`; nothing is persisted and there is no N+1.
+    Missing id → 404 `CHALLENGE_NOT_FOUND`.
+- **Mutations (reused routes, now audited)**: create still enforces 1–10
+  requirements and the existing validation; requirements are immutable after
+  creation (`updateChallengeSchema` is strict and has no `requirements`
+  field → 400). Delete cascades only `requirements` and participant
+  mappings — the mapped `FinancialHabit` and its completions survive.
+- **UI**: `/admin/challenges` (lazy route behind `RequireAdmin`, linked from
+  the Admin dashboard) — debounced search, type/status/active filters with
+  Apply/Clear, desktop table and mobile cards (Name | Type | Status |
+  Participants | Actions), Previous/Next pagination, a detail dialog
+  (challenge fields, requirements with mapped participants, `N joined · N
+  completed`), an RHF + zodResolver create/edit form with a
+  `useFieldArray` requirements editor (1–10 rows, requirements read-only
+  when editing), a delete confirmation dialog (separate alertdialog) and
+  loading/error/empty/no-results states.
+- **Tests**: `server/tests/adminChallenges.test.ts` (RBAC, spoofing, list
+  contract, strict validation, filters, detail with derived participant
+  stats, create/update/activation/delete with audit rows and cascade
+  safety, audit safety, GET-only routes), `client/src/pages/AdminChallenges.test.tsx`
+  (page states, search/filters/pagination, create/edit/delete flows,
+  validation, `RequireAdmin` access), plus the existing `challenge.test.ts`
+  suite (unchanged — it still owns public CRUD, join/leave/progress and
+  401/403 coverage). Live: `npm run e2e:admin-challenges --workspace=server`
+  (87 checks) — it cleans its challenge audit rows in `finally` (plus
+  defensively at start) so the global audit total asserted by
+  `e2e:admin-audit-logs` stays stable.
 
 ## Design Principles
 

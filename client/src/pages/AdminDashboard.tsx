@@ -257,6 +257,14 @@ export function AdminDashboard() {
               Manage users
             </Link>
             <Link
+              to="/admin/challenges"
+              className="btn-secondary btn-sm inline-flex items-center gap-2"
+              data-testid="admin-dashboard-manage-challenges"
+            >
+              <Trophy className="w-4 h-4" aria-hidden="true" />
+              Manage challenges
+            </Link>
+            <Link
               to="/admin/audit-logs"
               className="btn-secondary btn-sm inline-flex items-center gap-2"
               data-testid="admin-dashboard-audit-logs"

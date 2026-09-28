@@ -51,6 +51,10 @@ const AdminAuditLogs = lazy(() =>
   import('../pages/AdminAuditLogs').then((m) => ({ default: m.AdminAuditLogs }))
 );
 
+const AdminChallenges = lazy(() =>
+  import('../pages/AdminChallenges').then((m) => ({ default: m.AdminChallenges }))
+);
+
 export const routes: RouteObject[] = [
   {
     path: '/',
@@ -216,6 +220,14 @@ export const routes: RouteObject[] = [
       </RequireAdmin>
     ),
   },
+  {
+    path: '/admin/challenges',
+    element: (
+      <RequireAdmin>
+        {createElement(WithSuspense(AdminChallenges))}
+      </RequireAdmin>
+    ),
+  },
 ];
 
 export const publicRoutes = ['/', '/login', '/register'];
@@ -238,4 +250,5 @@ export const protectedRoutes = [
   '/admin',
   '/admin/users',
   '/admin/audit-logs',
+  '/admin/challenges',
 ];
