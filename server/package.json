@@ -18,6 +18,7 @@
     "e2e:net-worth": "tsx scripts/e2eNetWorth.ts",
     "e2e:wealth-analytics": "tsx scripts/e2eWealthAnalytics.ts",
     "e2e:reports": "tsx scripts/e2eReports.ts",
+    "e2e:admin-dashboard": "tsx scripts/e2eAdminDashboard.ts",
     "test": "vitest run",
     "test:watch": "vitest"
   },

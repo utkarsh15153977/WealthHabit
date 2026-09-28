@@ -30,6 +30,7 @@ import {
 import { wealthSnapshotRouter } from './routes/wealthSnapshotRoutes.js';
 import { wealthAnalyticsRouter } from './routes/wealthAnalyticsRoutes.js';
 import { reportRouter } from './routes/reportRoutes.js';
+import adminDashboardRoutes from './routes/adminDashboardRoutes.js';
 
 const app = express();
 
@@ -70,6 +71,7 @@ app.use('/api/wealth-snapshots', wealthSnapshotRouter);
 app.use('/api/wealth-analytics', wealthAnalyticsRouter);
 app.use('/api/reports', reportRouter);
 app.use('/api/dashboard', dashboardRoutes);
+app.use('/api/admin', adminDashboardRoutes);
 
 app.use(notFoundHandler);
 app.use(errorHandler);

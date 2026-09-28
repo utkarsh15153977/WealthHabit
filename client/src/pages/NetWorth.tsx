@@ -177,6 +177,7 @@ export function NetWorth() {
     { name: 'Net Worth', href: '/net-worth', icon: Scale, current: true },
     { name: 'Wealth Analytics', href: '/wealth-analytics', icon: TrendingUp, current: false },
     { name: 'Reports', href: '/reports', icon: FileText, current: false },
+    { name: 'Admin', href: '/admin', icon: LayoutDashboard, current: false },
     { name: 'Settings', href: '/profile', icon: Settings, current: false },
   ];
 

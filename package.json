@@ -22,7 +22,8 @@
     "db:seed": "npm run db:seed --workspace=server",
     "db:test:setup": "npm run db:test:setup --workspace=server",
     "db:studio": "npm run db:studio --workspace=server",
-    "e2e:reports": "npm run e2e:reports --workspace=server"
+    "e2e:reports": "npm run e2e:reports --workspace=server",
+    "e2e:admin-dashboard": "npm run e2e:admin-dashboard --workspace=server"
   },
   "devDependencies": {
     "concurrently": "^8.2.2"

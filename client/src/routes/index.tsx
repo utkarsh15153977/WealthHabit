@@ -2,6 +2,7 @@ import { createElement, lazy } from 'react';
 import { RouteObject } from 'react-router-dom';
 import { GuestRoute } from '../components/GuestRoute';
 import { ProtectedRoute } from '../components/ProtectedRoute';
+import { RequireAdmin } from '../components/RequireAdmin';
 import { WithSuspense } from '../components/WithSuspense';
 
 const Home = lazy(() => import('../pages/Home').then((m) => ({ default: m.Home })));
@@ -39,6 +40,9 @@ const WealthAnalytics = lazy(() =>
 );
 const Reports = lazy(() =>
   import('../pages/Reports').then((m) => ({ default: m.Reports }))
+);
+const AdminDashboard = lazy(() =>
+  import('../pages/AdminDashboard').then((m) => ({ default: m.AdminDashboard }))
 );
 
 export const routes: RouteObject[] = [
@@ -182,6 +186,14 @@ export const routes: RouteObject[] = [
       </ProtectedRoute>
     ),
   },
+  {
+    path: '/admin',
+    element: (
+      <RequireAdmin>
+        {createElement(WithSuspense(AdminDashboard))}
+      </RequireAdmin>
+    ),
+  },
 ];
 
 export const publicRoutes = ['/', '/login', '/register'];
@@ -201,4 +213,5 @@ export const protectedRoutes = [
   '/net-worth',
   '/wealth-analytics',
   '/reports',
+  '/admin',
 ];
