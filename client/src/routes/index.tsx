@@ -4,6 +4,7 @@ import { GuestRoute } from '../components/GuestRoute';
 import { ProtectedRoute } from '../components/ProtectedRoute';
 import { RequireAdmin } from '../components/RequireAdmin';
 import { WithSuspense } from '../components/WithSuspense';
+import { AppLayout } from '../components/layout/AppLayout';
 
 const Home = lazy(() => import('../pages/Home').then((m) => ({ default: m.Home })));
 const Login = lazy(() => import('../pages/Login').then((m) => ({ default: m.Login })));
@@ -84,7 +85,7 @@ export const routes: RouteObject[] = [
     path: '/dashboard',
     element: (
       <ProtectedRoute>
-        {createElement(WithSuspense(Dashboard))}
+        <AppLayout>{createElement(WithSuspense(Dashboard))}</AppLayout>
       </ProtectedRoute>
     ),
   },
@@ -92,7 +93,7 @@ export const routes: RouteObject[] = [
     path: '/profile',
     element: (
       <ProtectedRoute>
-        {createElement(WithSuspense(Profile))}
+        <AppLayout>{createElement(WithSuspense(Profile))}</AppLayout>
       </ProtectedRoute>
     ),
   },
@@ -100,7 +101,7 @@ export const routes: RouteObject[] = [
     path: '/transactions',
     element: (
       <ProtectedRoute>
-        {createElement(WithSuspense(Transactions))}
+        <AppLayout>{createElement(WithSuspense(Transactions))}</AppLayout>
       </ProtectedRoute>
     ),
   },
@@ -108,7 +109,7 @@ export const routes: RouteObject[] = [
     path: '/budgets',
     element: (
       <ProtectedRoute>
-        {createElement(WithSuspense(Budgets))}
+        <AppLayout>{createElement(WithSuspense(Budgets))}</AppLayout>
       </ProtectedRoute>
     ),
   },
@@ -116,7 +117,7 @@ export const routes: RouteObject[] = [
     path: '/recurring-transactions',
     element: (
       <ProtectedRoute>
-        {createElement(WithSuspense(RecurringTransactions))}
+        <AppLayout>{createElement(WithSuspense(RecurringTransactions))}</AppLayout>
       </ProtectedRoute>
     ),
   },
@@ -124,7 +125,7 @@ export const routes: RouteObject[] = [
     path: '/bills',
     element: (
       <ProtectedRoute>
-        {createElement(WithSuspense(Bills))}
+        <AppLayout>{createElement(WithSuspense(Bills))}</AppLayout>
       </ProtectedRoute>
     ),
   },
@@ -132,7 +133,7 @@ export const routes: RouteObject[] = [
     path: '/subscriptions',
     element: (
       <ProtectedRoute>
-        {createElement(WithSuspense(Subscriptions))}
+        <AppLayout>{createElement(WithSuspense(Subscriptions))}</AppLayout>
       </ProtectedRoute>
     ),
   },
@@ -140,7 +141,7 @@ export const routes: RouteObject[] = [
     path: '/notifications',
     element: (
       <ProtectedRoute>
-        {createElement(WithSuspense(Notifications))}
+        <AppLayout>{createElement(WithSuspense(Notifications))}</AppLayout>
       </ProtectedRoute>
     ),
   },
@@ -148,7 +149,7 @@ export const routes: RouteObject[] = [
     path: '/habits',
     element: (
       <ProtectedRoute>
-        {createElement(WithSuspense(Habits))}
+        <AppLayout>{createElement(WithSuspense(Habits))}</AppLayout>
       </ProtectedRoute>
     ),
   },
@@ -156,7 +157,7 @@ export const routes: RouteObject[] = [
     path: '/challenges',
     element: (
       <ProtectedRoute>
-        {createElement(WithSuspense(Challenges))}
+        <AppLayout>{createElement(WithSuspense(Challenges))}</AppLayout>
       </ProtectedRoute>
     ),
   },
@@ -164,7 +165,7 @@ export const routes: RouteObject[] = [
     path: '/goals',
     element: (
       <ProtectedRoute>
-        {createElement(WithSuspense(Goals))}
+        <AppLayout>{createElement(WithSuspense(Goals))}</AppLayout>
       </ProtectedRoute>
     ),
   },
@@ -172,7 +173,7 @@ export const routes: RouteObject[] = [
     path: '/assets-liabilities',
     element: (
       <ProtectedRoute>
-        {createElement(WithSuspense(AssetsLiabilities))}
+        <AppLayout>{createElement(WithSuspense(AssetsLiabilities))}</AppLayout>
       </ProtectedRoute>
     ),
   },
@@ -180,7 +181,7 @@ export const routes: RouteObject[] = [
     path: '/net-worth',
     element: (
       <ProtectedRoute>
-        {createElement(WithSuspense(NetWorth))}
+        <AppLayout>{createElement(WithSuspense(NetWorth))}</AppLayout>
       </ProtectedRoute>
     ),
   },
@@ -188,7 +189,7 @@ export const routes: RouteObject[] = [
     path: '/wealth-analytics',
     element: (
       <ProtectedRoute>
-        {createElement(WithSuspense(WealthAnalytics))}
+        <AppLayout>{createElement(WithSuspense(WealthAnalytics))}</AppLayout>
       </ProtectedRoute>
     ),
   },
@@ -196,7 +197,7 @@ export const routes: RouteObject[] = [
     path: '/reports',
     element: (
       <ProtectedRoute>
-        {createElement(WithSuspense(Reports))}
+        <AppLayout>{createElement(WithSuspense(Reports))}</AppLayout>
       </ProtectedRoute>
     ),
   },
@@ -204,7 +205,7 @@ export const routes: RouteObject[] = [
     path: '/admin',
     element: (
       <RequireAdmin>
-        {createElement(WithSuspense(AdminDashboard))}
+        <AppLayout>{createElement(WithSuspense(AdminDashboard))}</AppLayout>
       </RequireAdmin>
     ),
   },
@@ -212,7 +213,7 @@ export const routes: RouteObject[] = [
     path: '/admin/users',
     element: (
       <RequireAdmin>
-        {createElement(WithSuspense(AdminUsers))}
+        <AppLayout>{createElement(WithSuspense(AdminUsers))}</AppLayout>
       </RequireAdmin>
     ),
   },
@@ -220,7 +221,7 @@ export const routes: RouteObject[] = [
     path: '/admin/audit-logs',
     element: (
       <RequireAdmin>
-        {createElement(WithSuspense(AdminAuditLogs))}
+        <AppLayout>{createElement(WithSuspense(AdminAuditLogs))}</AppLayout>
       </RequireAdmin>
     ),
   },
@@ -228,7 +229,7 @@ export const routes: RouteObject[] = [
     path: '/admin/challenges',
     element: (
       <RequireAdmin>
-        {createElement(WithSuspense(AdminChallenges))}
+        <AppLayout>{createElement(WithSuspense(AdminChallenges))}</AppLayout>
       </RequireAdmin>
     ),
   },
@@ -236,7 +237,7 @@ export const routes: RouteObject[] = [
     path: '/admin/system-health',
     element: (
       <RequireAdmin>
-        {createElement(WithSuspense(AdminSystemHealth))}
+        <AppLayout>{createElement(WithSuspense(AdminSystemHealth))}</AppLayout>
       </RequireAdmin>
     ),
   },

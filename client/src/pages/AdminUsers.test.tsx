@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
+import { AppLayout } from '../components/layout/AppLayout';
 import { AdminUsers } from './AdminUsers';
 import {
   getAdminUser,
@@ -101,8 +102,10 @@ function pending<T>(): Promise<T> {
 
 function renderPage() {
   return render(
-    <MemoryRouter>
-      <AdminUsers />
+    <MemoryRouter initialEntries={['/admin/users']}>
+      <AppLayout>
+        <AdminUsers />
+      </AppLayout>
     </MemoryRouter>
   );
 }

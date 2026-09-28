@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
+import { AppLayout } from '../components/layout/AppLayout';
 import { AdminDashboard } from './AdminDashboard';
 import { getAdminDashboard } from '../services/adminDashboardApi';
 import { getMyProfile } from '../services/userApi';
@@ -65,8 +66,10 @@ function makeDashboardData(overrides: Partial<AdminDashboardData> = {}): AdminDa
 
 function renderPage() {
   return render(
-    <MemoryRouter>
-      <AdminDashboard />
+    <MemoryRouter initialEntries={['/admin']}>
+      <AppLayout>
+        <AdminDashboard />
+      </AppLayout>
     </MemoryRouter>
   );
 }
@@ -88,8 +91,8 @@ describe('AdminDashboard page', () => {
     renderPage();
 
     expect(await screen.findByRole('heading', { name: 'Admin Dashboard' })).toBeDefined();
-    expect(screen.getByRole('link', { name: /Admin/ })).toHaveAttribute('href', '/admin');
-    expect(screen.getByRole('link', { name: /Admin/ })).toHaveAttribute('aria-current', 'page');
+    expect(screen.getByRole('link', { name: 'Admin' })).toHaveAttribute('href', '/admin');
+    expect(screen.getByRole('link', { name: 'Admin' })).toHaveAttribute('aria-current', 'page');
   });
 
   it('shows the timestamp', async () => {

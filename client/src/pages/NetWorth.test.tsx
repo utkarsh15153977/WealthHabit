@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
+import { AppLayout } from '../components/layout/AppLayout';
 import { NetWorth } from './NetWorth';
 import { assetLiabilityApi } from '../services/assetLiabilityApi';
 import { wealthSnapshotApi } from '../services/wealthSnapshotApi';
@@ -77,8 +78,10 @@ function makeSnapshot(overrides: Partial<WealthSnapshot> = {}): WealthSnapshot {
 
 function renderPage() {
   return render(
-    <MemoryRouter>
-      <NetWorth />
+    <MemoryRouter initialEntries={['/net-worth']}>
+      <AppLayout>
+        <NetWorth />
+      </AppLayout>
     </MemoryRouter>
   );
 }

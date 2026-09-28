@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
+import { AppLayout } from '../components/layout/AppLayout';
 import { AdminAuditLogs } from './AdminAuditLogs';
 import { RequireAdmin } from '../components/RequireAdmin';
 import { listAuditLogs } from '../services/adminAuditLogsApi';
@@ -96,8 +97,10 @@ function pending<T>(): Promise<T> {
 
 function renderPage() {
   return render(
-    <MemoryRouter>
-      <AdminAuditLogs />
+    <MemoryRouter initialEntries={['/admin/audit-logs']}>
+      <AppLayout>
+        <AdminAuditLogs />
+      </AppLayout>
     </MemoryRouter>
   );
 }

@@ -1,33 +1,16 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Link } from 'react-router-dom';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import {
   Coins,
-  CreditCard,
-  LayoutDashboard,
-  Landmark,
-  ListChecks,
-  LogOut,
   Pencil,
   PiggyBank,
   Plus,
-  RefreshCw,
-  Repeat,
-  Receipt,
-  Scale,
-  Settings,
-  Target,
   Trash2,
-  FileText,
-  TrendingUp,
-  Trophy,
   Wallet,
   X,
 } from 'lucide-react';
-import { useAuth } from '../context/useAuth';
-import { NotificationBell } from '../components/NotificationBell';
 import { Loading } from '../components/Loading';
 import { getApiErrorMessage } from '../services/error';
 import { getMyProfile } from '../services/userApi';
@@ -183,7 +166,6 @@ function goalToForm(goal: Goal): GoalForm {
 }
 
 export function Goals() {
-  const { user, logout } = useAuth();
 
   const [goals, setGoals] = useState<Goal[]>([]);
   const [activeCount, setActiveCount] = useState(0);
@@ -690,75 +672,8 @@ export function Goals() {
     return <Loading />;
   }
 
-  const navigation = [
-    { name: 'Dashboard', href: '/dashboard', icon: LayoutDashboard, current: false },
-    { name: 'Transactions', href: '/transactions', icon: CreditCard, current: false },
-    { name: 'Budgets', href: '/budgets', icon: Target, current: false },
-    { name: 'Recurring', href: '/recurring-transactions', icon: Repeat, current: false },
-    { name: 'Bills', href: '/bills', icon: Receipt, current: false },
-    { name: 'Subscriptions', href: '/subscriptions', icon: RefreshCw, current: false },
-    { name: 'Habits', href: '/habits', icon: ListChecks, current: false },
-    { name: 'Challenges', href: '/challenges', icon: Trophy, current: false },
-    { name: 'Goals', href: '/goals', icon: PiggyBank, current: true },
-    { name: 'Assets & Liabilities', href: '/assets-liabilities', icon: Landmark, current: false },
-    { name: 'Net Worth', href: '/net-worth', icon: Scale, current: false },
-    { name: 'Wealth Analytics', href: '/wealth-analytics', icon: TrendingUp, current: false },
-    { name: 'Reports', href: '/reports', icon: FileText, current: false },
-    { name: 'Admin', href: '/admin', icon: LayoutDashboard, current: false },
-    { name: 'Settings', href: '/profile', icon: Settings, current: false },
-  ];
-
   return (
     <div className="page-container">
-      <header className="border-b border-border bg-surface sticky top-0 z-10">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <svg className="w-8 h-8 text-primary" viewBox="0 0 32 32" fill="none" aria-hidden="true">
-              <rect width="32" height="32" rx="8" fill="currentColor" />
-              <path
-                d="M8 16L14 22L24 10"
-                stroke="white"
-                strokeWidth="3"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              />
-            </svg>
-            <span className="text-xl font-bold text-text">WealthHabit</span>
-          </div>
-          <nav className="hidden md:flex items-center gap-1">
-            {navigation.map((item) => (
-              <Link
-                key={item.name}
-                to={item.href}
-                className={`px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
-                  item.current
-                    ? 'bg-primary-light text-primary'
-                    : 'text-text-muted hover:bg-background hover:text-text'
-                }`}
-                aria-current={item.current ? 'page' : undefined}
-              >
-                <item.icon className="w-4 h-4 inline mr-2" aria-hidden="true" />
-                {item.name}
-              </Link>
-            ))}
-          </nav>
-          <div className="flex items-center gap-4">
-            <span className="hidden sm:block text-sm text-text-muted">
-              {user ? `${user.firstName} ${user.lastName}` : ''}
-            </span>
-            <NotificationBell />
-            <button
-              type="button"
-              className="btn-ghost p-2"
-              aria-label="Sign out"
-              onClick={() => void logout()}
-            >
-              <LogOut className="w-5 h-5" aria-hidden="true" />
-            </button>
-          </div>
-        </div>
-      </header>
-
       <main className="page-content">
         <div className="mb-8 flex flex-col sm:flex-row sm:items-end sm:justify-between gap-4">
           <div>

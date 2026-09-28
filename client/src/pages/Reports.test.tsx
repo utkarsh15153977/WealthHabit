@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
+import { AppLayout } from '../components/layout/AppLayout';
 import { Reports } from './Reports';
 import { reportApi } from '../services/reportApi';
 import { getMyProfile } from '../services/userApi';
@@ -168,8 +169,10 @@ function makeReport(overrides: Partial<FinancialReport> = {}): FinancialReport {
 
 function renderPage() {
   return render(
-    <MemoryRouter>
-      <Reports />
+    <MemoryRouter initialEntries={['/reports']}>
+      <AppLayout>
+        <Reports />
+      </AppLayout>
     </MemoryRouter>
   );
 }

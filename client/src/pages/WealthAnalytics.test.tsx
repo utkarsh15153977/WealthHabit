@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
+import { AppLayout } from '../components/layout/AppLayout';
 import { WealthAnalytics } from './WealthAnalytics';
 import { wealthAnalyticsApi } from '../services/wealthAnalyticsApi';
 import { getMyProfile } from '../services/userApi';
@@ -198,8 +199,10 @@ function makeCashFlow(overrides: Partial<CashFlowAnalytics> = {}): CashFlowAnaly
 
 function renderPage() {
   return render(
-    <MemoryRouter>
-      <WealthAnalytics />
+    <MemoryRouter initialEntries={['/wealth-analytics']}>
+      <AppLayout>
+        <WealthAnalytics />
+      </AppLayout>
     </MemoryRouter>
   );
 }
