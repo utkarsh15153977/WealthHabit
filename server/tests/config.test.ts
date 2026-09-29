@@ -70,4 +70,67 @@ describe('Config Validation', () => {
       consoleWarnSpy.mockRestore();
     });
   });
+
+  describe('COOKIE_SECURE validation', () => {
+    it('keeps cookies insecure by default in development', async () => {
+      delete process.env.COOKIE_SECURE;
+      process.env.NODE_ENV = 'development';
+
+      const { env } = await import('../src/config/index.js');
+      expect(env.COOKIE_SECURE).toBe(false);
+    });
+
+    it('honours an explicit secure cookie opt-in in development', async () => {
+      process.env.COOKIE_SECURE = 'true';
+      process.env.NODE_ENV = 'development';
+
+      const { env } = await import('../src/config/index.js');
+      expect(env.COOKIE_SECURE).toBe(true);
+    });
+
+    it('forces secure cookies in production when unset', async () => {
+      delete process.env.COOKIE_SECURE;
+      process.env.NODE_ENV = 'production';
+      process.env.JWT_ACCESS_SECRET = 'a'.repeat(32);
+
+      const consoleWarnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      const { env } = await import('../src/config/index.js');
+
+      expect(env.COOKIE_SECURE).toBe(true);
+      expect(consoleWarnSpy).toHaveBeenCalledWith(
+        expect.stringContaining('COOKIE_SECURE is not enabled but NODE_ENV=production')
+      );
+      consoleWarnSpy.mockRestore();
+    });
+
+    it('refuses an explicit COOKIE_SECURE=false in production', async () => {
+      process.env.COOKIE_SECURE = 'false';
+      process.env.NODE_ENV = 'production';
+      process.env.JWT_ACCESS_SECRET = 'a'.repeat(32);
+
+      const consoleWarnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      const { env } = await import('../src/config/index.js');
+
+      expect(env.COOKIE_SECURE).toBe(true);
+      expect(consoleWarnSpy).toHaveBeenCalledWith(
+        expect.stringContaining('COOKIE_SECURE is not enabled but NODE_ENV=production')
+      );
+      consoleWarnSpy.mockRestore();
+    });
+
+    it('keeps an explicit COOKIE_SECURE=true in production without warning', async () => {
+      process.env.COOKIE_SECURE = 'true';
+      process.env.NODE_ENV = 'production';
+      process.env.JWT_ACCESS_SECRET = 'a'.repeat(32);
+
+      const consoleWarnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      const { env } = await import('../src/config/index.js');
+
+      expect(env.COOKIE_SECURE).toBe(true);
+      expect(consoleWarnSpy).not.toHaveBeenCalledWith(
+        expect.stringContaining('COOKIE_SECURE is not enabled')
+      );
+      consoleWarnSpy.mockRestore();
+    });
+  });
 });

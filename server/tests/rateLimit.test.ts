@@ -26,6 +26,24 @@ describe('API rate limiting', () => {
     expect(response.headers['ratelimit-limit']).toBe(AUTH_LIMIT);
   });
 
+  it('applies the auth limiter to logout', async () => {
+    const response = await request(app).post('/api/auth/logout').send({});
+
+    expect(response.headers['ratelimit-limit']).toBe(AUTH_LIMIT);
+  });
+
+  it('applies the auth limiter to logout-all', async () => {
+    const response = await request(app).post('/api/auth/logout-all').send({});
+
+    expect(response.headers['ratelimit-limit']).toBe(AUTH_LIMIT);
+  });
+
+  it('applies the auth limiter to the current-user endpoint', async () => {
+    const response = await request(app).get('/api/auth/me');
+
+    expect(response.headers['ratelimit-limit']).toBe(AUTH_LIMIT);
+  });
+
   it('returns a RATE_LIMIT_EXCEEDED error payload when limited', async () => {
     let limited: request.Response | undefined;
 

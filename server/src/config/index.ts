@@ -29,6 +29,28 @@ function validateJwtSecret(): string {
   return secret;
 }
 
+/**
+ * The refresh cookie must never travel over plain HTTP. Development and test
+ * stay env-driven (`COOKIE_SECURE` unset/false keeps cookies usable locally);
+ * production is forced secure so an unset or `false` value cannot silently
+ * downgrade it.
+ */
+function resolveCookieSecure(): boolean {
+  const requested = process.env.COOKIE_SECURE === 'true';
+
+  if (process.env.NODE_ENV !== 'production') {
+    return requested;
+  }
+
+  if (!requested) {
+    console.warn(
+      'WARNING: COOKIE_SECURE is not enabled but NODE_ENV=production. Forcing secure cookies so the refresh cookie is never sent over plain HTTP.'
+    );
+  }
+
+  return true;
+}
+
 export const env = {
   PORT: parseInt(process.env.PORT || '5000', 10),
   NODE_ENV: process.env.NODE_ENV || 'development',
@@ -38,7 +60,7 @@ export const env = {
   JWT_ACCESS_EXPIRES_IN: process.env.JWT_ACCESS_EXPIRES_IN || '15m',
   REFRESH_TOKEN_EXPIRES_DAYS: parseInt(process.env.REFRESH_TOKEN_EXPIRES_DAYS || '30', 10),
   COOKIE_NAME: process.env.COOKIE_NAME || 'wh_refresh_token',
-  COOKIE_SECURE: process.env.COOKIE_SECURE === 'true',
+  COOKIE_SECURE: resolveCookieSecure(),
   COOKIE_SAME_SITE: (process.env.COOKIE_SAME_SITE as 'lax' | 'strict' | 'none') || 'lax',
   isDevelopment: process.env.NODE_ENV === 'development',
   isProduction: process.env.NODE_ENV === 'production',
