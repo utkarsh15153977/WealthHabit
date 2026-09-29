@@ -960,9 +960,65 @@ responses all receive the same headers.
   actual-response, foreign-origin, credentials and allowed-header
   behaviour. `server/tests/rateLimit.test.ts` asserts the stricter
   `authRateLimit` on every auth route.
-- **Out of scope here**: no `trust proxy` / `X-Forwarded-For` handling, no
-  distributed rate-limit store and no TLS termination — those are
-  deployment concerns and are not application configuration.
+- **Out of scope here**: no distributed rate-limit store and no TLS
+  termination — both remain deployment concerns. `trust proxy` /
+  `X-Forwarded-For` handling is covered by the phase below.
+
+## Trust Proxy & Rate-Limit Trust Boundary (Phase 5G-2B)
+
+Deployment topology (platform, reverse proxy, hop count, TLS termination,
+instance count) is still unknown, so Phase 5G-2B adds only the
+infrastructure-independent seam: a fail-closed `TRUST_PROXY` resolver and the
+restoration of express-rate-limit's proxy safety validations.
+
+- **`TRUST_PROXY` resolver** (`server/src/config/index.ts`,
+  `resolveTrustProxy()`, exported as `env.TRUST_PROXY`): unset, empty, `false`
+  and `0` all resolve to `false`, preserving the previous behaviour exactly. A
+  positive integer resolves to a hop count; comma-separated proxy-addr values
+  (symbolic ranges `loopback` / `linklocal` / `uniquelocal`, bare addresses and
+  CIDR/netmask ranges) are validated token by token with `node:net` and
+  returned as a list. A literal `true` is **never** honoured — permissive trust
+  would make `req.ip` the left-most `X-Forwarded-For` entry, which any client
+  can forge — and any malformed value falls back to `false` with a startup
+  warning rather than throwing at `app.set`.
+- **Express wiring**: `app.set('trust proxy', env.TRUST_PROXY)` is the first
+  setting applied in `server/src/app.ts`. With the default `false` this is the
+  Express default, so `req.ip` continues to come from the TCP socket and
+  `X-Forwarded-For` is ignored.
+- **X-Forwarded-For trust boundary**: with a hop count or address list,
+  Express walks the address chain from the socket outward and stops at the
+  first untrusted hop, so a forged left-most entry cannot replace the
+  proxy-visible client IP when the hop count matches the real topology. The
+  configured value must therefore match the deployment, and clients must be
+  prevented from reaching the application directly whenever a numeric hop count
+  is used. No production value is chosen in this phase.
+- **Rate-limit safety validation**: the custom `keyGenerator` in
+  `server/src/middleware/rateLimit.ts` was removed. It produced exactly
+  `ipKeyGenerator(req.ip, 56)` — the express-rate-limit default — but by
+  replacing the default it silently disabled the library's `ip`,
+  `trustProxy`, `xForwardedForHeader` and `forwardedHeader` validations. With
+  the default restored, `TRUST_PROXY=true` (should it ever be forced) and an
+  unexpected `X-Forwarded-For` are reported instead of being ignored.
+  `windowMs`, `max`, `standardHeaders`, `legacyHeaders` and the separation of
+  `authRateLimit` / `apiRateLimit` are unchanged.
+- **Process-local store**: both limiters still use the library's in-memory
+  `MemoryStore`. Counters are per process, so they reset on restart and are not
+  shared across instances; a multi-instance deployment would multiply the
+  effective limit. No Redis or other distributed store has been added.
+- **HTTPS prerequisites**: the production-only `Strict-Transport-Security`
+  header and the `upgrade-insecure-requests` CSP directive
+  (`server/src/config/securityHeaders.ts`) and the forced `COOKIE_SECURE`
+  refresh cookie (`server/src/config/index.ts`) all assume TLS is terminated
+  in front of the application. TLS termination is not implemented here.
+- **Tests**: `server/tests/config.test.ts` covers `TRUST_PROXY` parsing;
+  `server/tests/trustProxy.test.ts` covers `req.ip` with trust disabled,
+  `trust proxy = 1`, forged left-most `X-Forwarded-For`, rejection of
+  permissive trust and the restored express-rate-limit validations;
+  `server/tests/rateLimit.test.ts` covers the six auth routes, limiter
+  separation and the process-local store.
+- **Deferred until topology is known**: the live `TRUST_PROXY` value, a
+  shared/distributed rate-limit store, TLS termination and any reverse-proxy,
+  container or CI/CD configuration.
 
 ## Design Principles
 

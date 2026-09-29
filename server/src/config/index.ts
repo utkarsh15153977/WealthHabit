@@ -1,3 +1,4 @@
+import { isIP } from 'node:net';
 import { config } from 'dotenv';
 config();
 
@@ -51,6 +52,95 @@ function resolveCookieSecure(): boolean {
   return true;
 }
 
+export type TrustProxyValue = boolean | number | string[];
+
+const TRUST_PROXY_SYMBOLIC_RANGES = new Set(['linklocal', 'loopback', 'uniquelocal']);
+
+function warnTrustProxy(problem: string): false {
+  console.warn(
+    `WARNING: TRUST_PROXY ${problem}. Falling back to false so X-Forwarded-For is never trusted.`
+  );
+  return false;
+}
+
+function isIpv4Netmask(value: string): boolean {
+  if (isIP(value) !== 4) return false;
+
+  let mask = 0;
+  for (const octet of value.split('.')) {
+    mask = (mask << 8) | Number(octet);
+  }
+  mask >>>= 0;
+  if (mask === 0) return false;
+
+  const inverted = ~mask >>> 0;
+  return (inverted & (inverted + 1)) === 0;
+}
+
+function isTrustProxyToken(token: string): boolean {
+  if (TRUST_PROXY_SYMBOLIC_RANGES.has(token)) return true;
+
+  const separator = token.indexOf('/');
+  if (separator === -1) return isIP(token) !== 0;
+  if (token.indexOf('/', separator + 1) !== -1) return false;
+
+  const family = isIP(token.slice(0, separator));
+  if (family === 0) return false;
+
+  const range = token.slice(separator + 1);
+  if (/^[0-9]+$/.test(range)) {
+    const prefix = Number(range);
+    const maxPrefix = family === 4 ? 32 : 128;
+    return prefix > 0 && prefix <= maxPrefix;
+  }
+
+  return family === 4 && isIpv4Netmask(range);
+}
+
+/**
+ * Resolves `TRUST_PROXY` into a value Express accepts for `app.set('trust proxy')`.
+ *
+ * Returns `false` (the safe default) for unset/empty input and for anything that
+ * cannot be proven safe. A literal `true` is never honoured because it would let
+ * any client forge `X-Forwarded-For` and rotate its own rate-limit key.
+ */
+export function resolveTrustProxy(
+  raw: string | undefined = process.env.TRUST_PROXY
+): TrustProxyValue {
+  if (raw === undefined) return false;
+
+  const value = raw.trim();
+  if (value === '') return false;
+
+  const normalized = value.toLowerCase();
+  if (normalized === 'false' || normalized === '0') return false;
+
+  if (normalized === 'true') {
+    return warnTrustProxy(
+      'cannot be "true"; permissive trust would let any client forge X-Forwarded-For'
+    );
+  }
+
+  if (/^[0-9]+$/.test(value)) {
+    const hops = Number(value);
+    if (hops === 0) return false;
+    if (Number.isSafeInteger(hops)) return hops;
+    return warnTrustProxy(`"${value}" is not a safe hop count`);
+  }
+
+  const tokens = value.split(',').map((token) => token.trim());
+  if (tokens.some((token) => token === '')) {
+    return warnTrustProxy(`"${value}" contains an empty entry`);
+  }
+  if (tokens.some((token) => !isTrustProxyToken(token))) {
+    return warnTrustProxy(
+      `"${value}" is not a supported address, CIDR range or symbolic range`
+    );
+  }
+
+  return tokens;
+}
+
 export const env = {
   PORT: parseInt(process.env.PORT || '5000', 10),
   NODE_ENV: process.env.NODE_ENV || 'development',
@@ -62,6 +152,7 @@ export const env = {
   COOKIE_NAME: process.env.COOKIE_NAME || 'wh_refresh_token',
   COOKIE_SECURE: resolveCookieSecure(),
   COOKIE_SAME_SITE: (process.env.COOKIE_SAME_SITE as 'lax' | 'strict' | 'none') || 'lax',
+  TRUST_PROXY: resolveTrustProxy(),
   isDevelopment: process.env.NODE_ENV === 'development',
   isProduction: process.env.NODE_ENV === 'production',
 };

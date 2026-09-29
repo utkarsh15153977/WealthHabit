@@ -171,6 +171,7 @@ WealthHabit/
 | NODE_ENV | Environment mode | development |
 | CLIENT_URL | Frontend URL for CORS | http://localhost:5173 |
 | VITE_API_BASE_URL | Frontend API base URL | http://localhost:5000/api |
+| TRUST_PROXY | Reverse-proxy trust for `X-Forwarded-For` (`false`, hop count, or proxy-addr list). Never `true` | false |
 
 ### Client (client/.env)
 | Variable | Description |
@@ -184,6 +185,57 @@ WealthHabit/
 | NODE_ENV | Environment mode |
 | DATABASE_URL | PostgreSQL connection string |
 | CLIENT_URL | Frontend URL for CORS |
+| TRUST_PROXY | Reverse-proxy trust for `X-Forwarded-For`. Never `true` |
+
+### Reverse Proxy, Rate Limiting & HTTPS Prerequisites
+
+**`TRUST_PROXY` behaviour.** `TRUST_PROXY` is passed straight to Express as
+`app.set('trust proxy', ...)` (see `server/src/config/index.ts` and
+`server/src/app.ts`). The resolver:
+
+| Value | Result |
+|-------|--------|
+| unset / empty / `false` / `0` | `false` — `X-Forwarded-For` ignored, `req.ip` comes from the TCP socket (default, current behaviour) |
+| positive integer (`1`, `2`, …) | trusted proxy hop count |
+| proxy-addr list (`loopback`, `loopback,uniquelocal`, `10.0.0.0/8`, `192.168.0.0/255.255.0.0`) | trusted address/range list |
+| literal `true` (any casing) | **rejected** — falls back to `false` with a startup warning |
+| anything else (garbage, `yes`, `-1`, `2.5`, trailing comma, out-of-range prefix) | falls back to `false` with a startup warning |
+
+Never set `TRUST_PROXY=true`: permissive trust makes `req.ip` equal the
+left-most `X-Forwarded-For` entry, which any client can forge, giving every
+attacker an unlimited supply of fresh rate-limit keys.
+
+**`X-Forwarded-For` trust boundary.** `X-Forwarded-For` is only consulted when
+`TRUST_PROXY` is a hop count or an address list, and Express then walks the
+chain from the socket outward, stopping at the first untrusted hop. The
+configured value must match the **real** deployment topology: too few hops and
+the real client IP is lost; too many hops and client-forged left-most entries
+become authoritative again. When a numeric hop count is used, **direct client
+access to the application must be prevented** so that only the proxy can reach
+it — otherwise a client connecting straight to the app can forge its own
+`X-Forwarded-For` entry. Because the topology is not yet known, `TRUST_PROXY`
+stays unset.
+
+**Rate-limit store.** `authRateLimit` and `apiRateLimit`
+(`server/src/middleware/rateLimit.ts`) use express-rate-limit's default
+in-process `MemoryStore`. Counters are process-local: they reset on restart and
+are not shared between instances, so a multi-instance deployment would give
+each instance its own full budget. A shared store (e.g. Redis) is deliberately
+not part of the project yet and must not be added until the deployment topology
+and instance count are known.
+
+**HTTPS prerequisites.** Three production behaviours assume HTTPS and only
+activate once TLS is actually terminated in front of (or by) the application:
+
+| Feature | Where | Prerequisite |
+|---------|-------|--------------|
+| `Strict-Transport-Security` header | `server/src/config/securityHeaders.ts` | `NODE_ENV=production` **and** the response must be served over HTTPS, otherwise browsers ignore (or discard) the header |
+| `upgrade-insecure-requests` CSP directive | `server/src/config/securityHeaders.ts` | `NODE_ENV=production` **and** HTTPS on the origin; on plain HTTP it would rewrite requests to a scheme the origin does not serve |
+| `COOKIE_SECURE=true` on the refresh cookie | `server/src/config/index.ts` | forced in `NODE_ENV=production`; cookies with `Secure` are never sent over plain HTTP, so the refresh flow needs HTTPS end-to-end |
+
+TLS termination itself is not implemented here — it is a deployment concern
+that must be resolved together with `TRUST_PROXY`.
+
 
 ## Available Scripts
 

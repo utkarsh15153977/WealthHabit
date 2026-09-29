@@ -1,11 +1,7 @@
-import rateLimit, { ipKeyGenerator } from 'express-rate-limit';
-import { Request } from 'express';
+import rateLimit from 'express-rate-limit';
 import { env } from '../config/index.js';
 
 const windowMs = 15 * 60 * 1000; // 15 minutes
-
-const ipKeyGeneratorMiddleware = (req: Request): string =>
-  ipKeyGenerator(req.ip ?? '');
 
 export const authRateLimit = rateLimit({
   windowMs,
@@ -19,7 +15,6 @@ export const authRateLimit = rateLimit({
   },
   standardHeaders: true,
   legacyHeaders: false,
-  keyGenerator: ipKeyGeneratorMiddleware,
 });
 
 export const apiRateLimit = rateLimit({
@@ -34,5 +29,4 @@ export const apiRateLimit = rateLimit({
   },
   standardHeaders: true,
   legacyHeaders: false,
-  keyGenerator: ipKeyGeneratorMiddleware,
 });
