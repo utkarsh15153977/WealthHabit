@@ -35,7 +35,7 @@ WealthHabit follows a monorepo architecture with clear separation between fronte
 
 ### Key Directories
 - `src/components/` - Reusable UI components
-- `src/layouts/` - Page layouts (auth, dashboard, etc.)
+- `src/components/layout/` - Shared app shell (`AppLayout`, `Header`, `Sidebar`, `navConfig`)
 - `src/pages/` - Page components
 - `src/routes/` - Route configuration and guards
 - `src/services/` - API service layer
@@ -515,6 +515,41 @@ channel.
   report sections, loading/error/empty/retry states, CSV/PDF download
   buttons, and a `Reports` nav item on every page.
 
+## App Layout & Navigation
+
+- **Shell**: every authenticated route in `client/src/routes/index.tsx` is
+  rendered as `guard → AppLayout → lazy page`, where the guard is
+  `ProtectedRoute` for user pages and `RequireAdmin` for admin pages. There
+  is exactly one layout component (`client/src/components/layout/AppLayout.tsx`)
+  — no page carries its own sidebar or top bar.
+- **Sidebar navigation** is a single array-driven structure in
+  `client/src/components/layout/navConfig.ts`:
+  `primaryNavGroup`, `wealthNavGroup`, `adminNavGroup`, `accountNavGroup`,
+  exposed through `getNavGroups(isAdmin)`. `adminNavGroup` lists Admin,
+  Admin Users, Admin Challenges, Audit Logs and System Health; it is
+  appended **only** when `user.role === 'ADMIN'`, so a `USER` never sees
+  admin destinations. No second navigation array exists anywhere else.
+- **Active state**: `Sidebar` compares `location.pathname` with each item's
+  `href` and sets `aria-current="page"`; `/admin` and `/admin/users` are
+  distinct entries, so highlighting is exact rather than prefix-based.
+- **Desktop**: the sidebar is either compact (68px, icon-only links with a
+  `title` tooltip) or expanded (268px, labels + group headings). The choice
+  is persisted in `localStorage` under `wealthhabit.sidebar.open` as the
+  string `"true"`/`"false"` only — no user, role or security data is stored,
+  and unreadable/invalid values fall back to collapsed.
+- **Mobile (< 1024px)**: the sidebar renders as an overlay drawer
+  (`translate-x`) with a backdrop (`data-testid="sidebar-backdrop"`), body
+  scroll lock, Escape-to-close, backdrop click-to-close and
+  close-on-navigate. It always starts closed on mobile regardless of the
+  stored desktop preference.
+- **Header**: sticky, contains the sidebar toggle
+  (`aria-expanded`/`aria-controls="app-sidebar"`), brand link, user name,
+  notification bell and sign-out. Content is padded with `lg:pl-[268px]`
+  (expanded) or `lg:pl-[68px]` (compact), so the fixed sidebar never
+  overlaps page content and no horizontal scrollbar is introduced.
+- **Read-only by storage**: nothing security- or finance-related is written
+  to `localStorage` by the layout.
+
 ## Admin Authorization
 
 - **Role model**: `Role` enum (`USER`, `ADMIN`) in Prisma schema; `User.role` defaults to `USER`.
@@ -532,7 +567,7 @@ channel.
   - No public role-management API; role changes only via the ADMIN-only
     `PATCH /api/admin/users/:id/role` operation (Phase 5F-3); `ADMIN`
     promotion no longer requires raw SQL
-- **Admin-only endpoints** (Phase 5F-1 / 5F-2 / 5F-3 / 5F-5):
+- **Admin-only endpoints** (Phase 5F-1 … 5F-6):
   - `POST /api/challenges` — create challenge
   - `PATCH /api/challenges/:id` — update challenge
   - `DELETE /api/challenges/:id` — delete challenge
@@ -552,7 +587,38 @@ channel.
   - `DELETE /api/challenges/:id/leave` — leave challenge
   - `GET /api/challenges/:id/progress` — get progress
   - `POST /api/challenges/:id/requirements/:requirementId/habit` — map requirement habit
-- **Frontend**: `RequireAdmin` route guard (`client/src/components/RequireAdmin.tsx`) guards `/admin` (operational dashboard, 5F-2), `/admin/users` (user management, 5F-3), `/admin/audit-logs` (audit log, 5F-4), `/admin/challenges` (challenge administration, 5F-5) and `/admin/system-health` (system health, 5F-6); backend remains authoritative security boundary.
+- **Frontend**: `RequireAdmin` route guard (`client/src/components/RequireAdmin.tsx`) guards `/admin` (operational dashboard, 5F-2), `/admin/users` (user management, 5F-3), `/admin/audit-logs` (audit log, 5F-4), `/admin/challenges` (challenge administration, 5F-5) and `/admin/system-health` (system health, 5F-6); each route renders inside the shared `AppLayout` and all five are listed in the sidebar's `Admin` group (shown only to `ADMIN` users); backend remains authoritative security boundary.
+
+## Admin Dashboard (Phase 5F-2)
+
+- **Endpoint**: `GET /api/admin/dashboard` in
+  `server/src/routes/adminDashboardRoutes.ts` — `authenticate →
+  requireAdmin → asyncHandler` (no query or body, so no validation schema),
+  mounted as `app.use('/api/admin', adminDashboardRoutes)` in
+  `server/src/app.ts`. GET only: `POST`/`PATCH`/`PUT`/`DELETE` → 404.
+- **Read-only and unaudited**: the service (`adminDashboardService.ts`)
+  performs only `prisma.*.count()` calls; loading the dashboard writes no
+  audit row, no notification and no application data.
+- **Response**: `{ success, data: { users, financialRecords, application,
+  generatedAt } }`.
+  - `users` — `{ total, active, suspended, deactivated, admins,
+    recentlyRegistered }` (30-day window).
+  - `financialRecords` — `{ transactions, savingsGoals, assets,
+    liabilities, wealthSnapshots }` **counts only**; no amounts, balances or
+    percentages are ever computed or returned.
+  - `application` — `{ habits, challenges, notifications }` counts.
+- **UI**: `/admin` (lazy route behind `RequireAdmin`) — three metric grids
+  (User Overview, Financial Records, Application), a `Last refreshed`
+  timestamp, manual Refresh (disabled while loading), loading/error/retry
+  states, and shortcut links to Manage users, Manage challenges, Audit log
+  and System health (the sidebar already lists the same destinations; the
+  dashboard links are retained as shortcuts with distinct labels/test ids).
+- **Tests**: `client/src/pages/AdminDashboard.test.tsx` (metric grids,
+  zero values, loading/error/retry, refresh disabled while loading, no
+  dollar/decimal amounts rendered), plus
+  `npm run e2e:admin-dashboard --workspace=server` (26 checks: RBAC 401/403,
+  header/query spoofing, suspended/deactivated admins, no financial amounts,
+  reads create no records).
 
 ## Admin User Management (Phase 5F-3)
 
@@ -564,12 +630,12 @@ channel.
   controller → service`; registered centrally as
   `app.use('/api/admin', adminUserRoutes)` in `server/src/app.ts`.
   - `GET /api/admin/users` — strict query: `page` ≥ 1 (default 1),
-    `pageSize` 1–50 (default 10), `search` ≤ 100 chars, `role` in
+    `pageSize` 1–50 (default 20), `search` ≤ 100 chars, `role` in
     `USER|ADMIN`, `status` in `ACTIVE|SUSPENDED|DEACTIVATED`; unknown
-    parameters → 400 `VALIDATION_ERROR`. Returns `{ items, pagination }`
-    with a safe summary per user (id, name, email, role, status, email
-    verification, last login, created/updated timestamps) — never
-    `passwordHash`, session/refresh hashes or tokens.
+    parameters → 400 `VALIDATION_ERROR`. Returns `{ users, page, pageSize,
+    total, totalPages }` with a safe summary per user (`id`, `email`,
+    `firstName`, `lastName`, `role`, `status`, `lastLoginAt`, `createdAt`,
+    `updatedAt`) — never `passwordHash`, session/refresh hashes or tokens.
   - `GET /api/admin/users/:id` — safe detail: profile fields plus
     operational counts (transactions, goals, assets, liabilities, habits,
     challenge participations) and nothing monetary; missing/malformed id →
@@ -599,8 +665,8 @@ channel.
   `server/src/services/auditLogService.ts` writes `ADMIN_USER_STATUS_CHANGED`
   and `ADMIN_USER_ROLE_CHANGED` rows atomically with the mutation (metadata:
   ids, from/to, revoked session count; never credentials or financial
-  values). This is a minimal integration only — the audit-log query/UI is
-  Phase 5F-4.
+  values). Both actions are queryable through `GET /api/admin/audit-logs`
+  and rendered by the Phase 5F-4 audit-log UI.
 - **Data safety**: status/role changes touch only `users` rows, sessions and
   audit rows — transactions, goals, assets, liabilities, habits and
   challenge data are never deleted or modified (asserted by tests and
@@ -629,7 +695,7 @@ channel.
   - `ADMIN_USER_ROLE_CHANGED` — metadata `{ targetUserId, from, to }`,
     written inside the same transaction as the role update (5F-3).
   5F-4 adds no new writers and no reads that write (no recursive
-  audit-of-audit entries). Phase 5F-5 later appends the three challenge
+  audit-of-audit entries). Phase 5F-5 appends the three challenge
   actions (`ADMIN_CHALLENGE_CREATED` / `ADMIN_CHALLENGE_UPDATED` /
   `ADMIN_CHALLENGE_DELETED`) to this same set — documented in the
   Challenge Administration section below; because the API's action filter
@@ -676,7 +742,10 @@ channel.
   audit metadata.
 - **UI**: `/admin/audit-logs` (lazy route behind `RequireAdmin`, linked from
   the Admin dashboard) — debounced search over actor/target names and email,
-  action select derived from `AUDIT_ACTIONS`, actor/target id inputs, date
+  action select derived from `AUDIT_ACTIONS` in
+  `client/src/types/adminAuditLogs.ts` (kept in sync with the server's
+  `AuditActions`, so all five current actions are selectable), actor/target
+  id inputs, date
   inputs with explicit Apply/Clear, desktop table and mobile cards
   (Timestamp | Action | Actor | Target | Details), a read-only detail dialog
   (action, formatted + ISO timestamp, actor, target, entity, pretty-printed

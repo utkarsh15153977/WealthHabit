@@ -384,8 +384,8 @@ export function AdminAuditLogs() {
                   </div>
                   <h2 className="heading-2 mb-3">No audit events recorded</h2>
                   <p className="text-text-muted max-w-md mx-auto">
-                    Administrative actions such as status and role changes will
-                    appear here as they happen.
+                    Administrative actions such as status, role and challenge
+                    changes will appear here as they happen.
                   </p>
                 </div>
               </div>

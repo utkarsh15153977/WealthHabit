@@ -353,7 +353,8 @@ Implemented:
   `200 alreadyJoined` after). Challenges are informational only: no XP,
   leaderboards, rewards, notifications or scheduler, and they never create or
   mutate transactions, budgets, bills, subscriptions, recurring rules or habit
-  completions. Admin creation/management is API-only for now (no admin UI);
+  completions. Admin creation/management is available from the
+  `/admin/challenges` admin UI as well as the ADMIN-only API;
   tests promote users to `ADMIN` via controlled SQL setup.
 - ✅ **Savings goals** — goal CRUD with per-goal contributions
   (`GET/POST /api/goals`, `GET/PATCH/DELETE /api/goals/:id`,
@@ -451,6 +452,18 @@ Implemented:
   range presets, all sections, loading/error/empty/retry states, CSV/PDF
   download buttons, and a `Reports` nav item on every page.
   - ✅ Server test suite (876 tests) + client unit tests (140 tests)
+- ✅ **App layout & navigation** — every signed-in page (including all five
+  admin pages) renders inside the shared `AppLayout`
+  (`client/src/components/layout/AppLayout.tsx`): a sticky `Header` plus a
+  collapsible left `Sidebar` driven by a single navigation array
+  (`client/src/components/layout/navConfig.ts`). Desktop uses a compact
+  (icon-only, `title` tooltip) or expanded sidebar persisted in
+  `localStorage` (`wealthhabit.sidebar.open` — a boolean only, no user or
+  security data); below 1024px the sidebar becomes an overlay drawer with a
+  backdrop, Escape-to-close, body-scroll lock and close-on-navigate. Active
+  routes are marked with `aria-current="page"`. The `Admin` group (Admin,
+  Admin Users, Admin Challenges, Audit Logs, System Health) is included only
+  when `user.role === 'ADMIN'`.
 - ✅ **Admin Authorization** — centralized RBAC with `USER`/`ADMIN` roles:
   - `requireAdmin` middleware protects admin-only endpoints
   - Anonymous requests → 401
@@ -459,8 +472,13 @@ Implemented:
   - Role sourced from authenticated JWT (validated against DB), never from client headers/body/query
   - Self-escalation prevented: registration defaults to `USER`, profile updates cannot modify role
   - Suspended/deactivated accounts blocked at auth layer (403)
-  - **Admin-only endpoints**: `POST/PATCH/DELETE /api/challenges` (challenge management)
-  - Frontend: `RequireAdmin` route guard for future admin pages
+  - **Admin-only endpoints**: `POST/PATCH/DELETE /api/challenges` (challenge
+    management) plus every `/api/admin/*` route — all follow the same
+    `authenticate → requireAdmin → [Zod validate] → controller → service`
+    chain, with no page-specific authentication mechanism
+  - Frontend: `RequireAdmin` route guard for every admin page
+    (`/admin`, `/admin/users`, `/admin/audit-logs`, `/admin/challenges`,
+    `/admin/system-health`)
 - ✅ **Admin Dashboard** — `GET /api/admin/dashboard` (ADMIN-only operational
   overview: user counts, record counts and application metrics) with the
   `/admin` page behind `RequireAdmin` (loading/error/retry states, no
@@ -485,7 +503,7 @@ Implemented:
   - Credentials (`passwordHash`, refresh/session hashes, tokens) are never
     returned; status/role changes never delete financial records; sensitive
     mutations write `ADMIN_USER_STATUS_CHANGED`/`ADMIN_USER_ROLE_CHANGED`
-    audit entries (full audit-log UI remains Phase 5F-4)
+    audit entries (queryable and displayed by the Phase 5F-4 audit-log UI)
 - ✅ **Audit log management** — `/admin/audit-logs` page (behind
   `RequireAdmin`, linked from the Admin dashboard) plus the ADMIN-only,
   read-only API `GET /api/admin/audit-logs`:
@@ -560,5 +578,28 @@ Implemented:
   - Scope: application-level operational health only — it does not provide
     Kubernetes health probes, Prometheus metrics, Grafana monitoring,
     external uptime monitoring or automatic alerting
+- ✅ **Admin routes & audit coverage** — the five admin destinations are
+  `/admin`, `/admin/users`, `/admin/challenges`, `/admin/audit-logs` and
+  `/admin/system-health`; each is lazy-loaded behind `RequireAdmin` and
+  wrapped in `AppLayout`, and all five appear in the sidebar's `Admin`
+  group (the Admin Dashboard additionally links to the other four as
+  shortcuts). Backend routes:
 
-Next milestone: **to be planned** (Phases 1, 2, 3A–3C, 4A, 4B, 4C, 5A, 5B, 5C, 5D, 5F-1, 5F-2, 5F-3, 5F-4, 5F-5 and 5F-6 delivered)
+  | Surface | Route | Methods |
+  | --- | --- | --- |
+  | Dashboard | `GET /api/admin/dashboard` | GET only, read-only, unaudited |
+  | User management | `GET /api/admin/users`, `GET /api/admin/users/:id`, `PATCH /api/admin/users/:id/status`, `PATCH /api/admin/users/:id/role` | audited on PATCH |
+  | Audit logs | `GET /api/admin/audit-logs` | GET only, read-only, unaudited |
+  | Challenge administration | `GET /api/admin/challenges`, `GET /api/admin/challenges/:id` (reads) + `POST/PATCH/DELETE /api/challenges` (mutations) | audited on mutation |
+  | System health | `GET /api/admin/system-health` | GET only, read-only, unaudited |
+
+  Audit coverage: `ADMIN_USER_STATUS_CHANGED`, `ADMIN_USER_ROLE_CHANGED`,
+  `ADMIN_CHALLENGE_CREATED`, `ADMIN_CHALLENGE_UPDATED` and
+  `ADMIN_CHALLENGE_DELETED` (activation flips are audited as
+  `ADMIN_CHALLENGE_UPDATED` with `previousIsActive`/`newIsActive`). Reads —
+  dashboard, user list/detail, challenge list/detail, audit-log queries and
+  system health — never write audit rows, so there is no recursive
+  audit-of-audit noise. Dashboard, Audit Logs and System Health are
+  read-only: loading them mutates nothing.
+
+Next milestone: **to be planned** (Phases 1, 2, 3A–3C, 4A, 4B, 4C, 5A, 5B, 5C, 5D, 5F-1, 5F-2, 5F-3, 5F-4, 5F-5, 5F-6 and 5F-7 delivered)
