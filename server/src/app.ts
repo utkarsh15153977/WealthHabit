@@ -4,6 +4,7 @@ import helmet from 'helmet';
 import morgan from 'morgan';
 import cookieParser from 'cookie-parser';
 import { env } from './config/index.js';
+import { securityHeaderOptions } from './config/securityHeaders.js';
 import { errorHandler, notFoundHandler } from './middleware/errorHandler.js';
 import { requestLogger } from './middleware/logger.js';
 import { apiRateLimit } from './middleware/rateLimit.js';
@@ -38,10 +39,12 @@ import adminSystemHealthRoutes from './routes/adminSystemHealthRoutes.js';
 
 const app = express();
 
-app.use(helmet());
+app.disable('x-powered-by');
+
+app.use(helmet(securityHeaderOptions));
 
 app.use(cors({
-  origin: env.CLIENT_URL,
+  origin: [env.CLIENT_URL],
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization'],

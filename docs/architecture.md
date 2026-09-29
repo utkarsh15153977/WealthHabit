@@ -918,6 +918,52 @@ channel.
   `npm run e2e:admin-system-health --workspace=server` (67 checks against
   the running API).
 
+## Security Headers & CORS (Phase 5G-2A)
+
+Every response passes through an explicit helmet configuration defined in
+`server/src/config/securityHeaders.ts` and applied first in
+`server/src/app.ts`, so health, auth, general API and `/api/admin/*`
+responses all receive the same headers.
+
+- **Pinned headers**: `X-Powered-By` is removed (`app.disable('x-powered-by')`
+  plus helmet's `xPoweredBy`), `X-Content-Type-Options: nosniff`,
+  `X-Frame-Options: SAMEORIGIN`, `Referrer-Policy: no-referrer`,
+  `Cross-Origin-Opener-Policy: same-origin`,
+  `Cross-Origin-Resource-Policy: same-origin`, `Origin-Agent-Cluster: ?1`,
+  `X-DNS-Prefetch-Control: off`, `X-Download-Options: noopen`,
+  `X-Permitted-Cross-Domain-Policies: none`, `X-XSS-Protection: 0`.
+  Every helmet option is declared explicitly so a helmet upgrade cannot
+  change the emitted headers silently; `Cross-Origin-Embedder-Policy`
+  stays disabled.
+- **Content-Security-Policy**: built with `useDefaults: false` from an
+  explicit directive set (`default-src 'self'`, `base-uri 'self'`,
+  `font-src 'self' https: data:`, `form-action 'self'`,
+  `frame-ancestors 'self'`, `img-src 'self' data:`, `object-src 'none'`,
+  `script-src 'self'`, `script-src-attr 'none'`,
+  `style-src 'self' https: 'unsafe-inline'`). Production additionally
+  sends `upgrade-insecure-requests`; development and test deliberately
+  omit it so plain-HTTP `http://localhost:5000` navigation is never
+  rewritten to `https://`. The API only emits JSON, so this policy
+  governs documents served from this origin and does not affect the Vite
+  client, which runs on its own origin.
+- **Strict-Transport-Security**: sent only when `NODE_ENV=production`
+  (`max-age=15552000; includeSubDomains`, 180 days). It is never emitted
+  in development or test, where the API is served over plain HTTP.
+- **CORS**: locked to `CLIENT_URL` with `credentials: true`, methods
+  `GET, POST, PUT, PATCH, DELETE, OPTIONS` and allowed headers
+  `Content-Type, Authorization`. The origin is supplied as an allowlist,
+  so any other origin receives no `Access-Control-Allow-Origin` header at
+  all instead of a mismatched one.
+- **Tests**: `server/tests/securityHeaders.test.ts` covers the header set
+  on normal and `/api/admin/*` responses, the absent `X-Powered-By`, the
+  environment-specific CSP and HSTS branches, and CORS preflight,
+  actual-response, foreign-origin, credentials and allowed-header
+  behaviour. `server/tests/rateLimit.test.ts` asserts the stricter
+  `authRateLimit` on every auth route.
+- **Out of scope here**: no `trust proxy` / `X-Forwarded-For` handling, no
+  distributed rate-limit store and no TLS termination — those are
+  deployment concerns and are not application configuration.
+
 ## Design Principles
 
 - Separation of concerns
