@@ -3,7 +3,12 @@ import request from 'supertest';
 import { ipKeyGenerator } from 'express-rate-limit';
 import app from '../src/app.js';
 import { env } from '../src/config/index.js';
-import { apiRateLimit, authRateLimit } from '../src/middleware/rateLimit.js';
+import {
+  apiRateLimit,
+  authRateLimit,
+  buildLoginRateLimitKey,
+  loginRateLimit,
+} from '../src/middleware/rateLimit.js';
 
 const API_LIMIT = String(env.isDevelopment ? 500 : 100);
 const AUTH_LIMIT = String(env.isDevelopment ? 100 : 20);
@@ -27,6 +32,8 @@ async function countedKey(limiter: CountingLimiter): Promise<string | undefined>
 async function resetClientCounters(): Promise<void> {
   for (const key of CLIENT_KEYS) {
     authRateLimit.resetKey(key);
+    // Login requests without an email use the IP-only fallback key.
+    loginRateLimit.resetKey(buildLoginRateLimitKey(undefined, key));
     apiRateLimit.resetKey(key);
   }
 }

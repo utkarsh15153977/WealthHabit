@@ -1020,6 +1020,80 @@ restoration of express-rate-limit's proxy safety validations.
   shared/distributed rate-limit store, TLS termination and any reverse-proxy,
   container or CI/CD configuration.
 
+## Deployment-Aware Rate Limiting & Login Hardening (Phase 5G-6)
+
+Phase 5G-2B already provides the fail-closed `TRUST_PROXY` resolver, the
+`app.set('trust proxy', env.TRUST_PROXY)` wiring and express-rate-limit's proxy
+validations. Phase 5G-6 closes the remaining production-hardening audit
+findings (H-3 and part of H-8) on top of that seam.
+
+- **Topology discovery**: the repository still does not establish a production
+  proxy topology — `docker-compose.yml` runs only PostgreSQL, and
+  `docs/architecture.md`, the README and the environment examples all defer
+  the platform/proxy/hop-count decision. No hop count is therefore invented:
+  `TRUST_PROXY` keeps its safe `false` default, stays environment-driven and
+  invalid values keep failing closed to `false` with a startup warning
+  (covered by `server/tests/config.test.ts`). The production value must be
+  set to match the real proxy chain; until then every client shares the
+  socket address as its rate-limit identity.
+- **Rate-limit client identity**: all three limiters key off `req.ip`, which
+  Express derives from the configured trust boundary — never from a raw
+  `X-Forwarded-For` or `X-Real-IP` header. With `TRUST_PROXY=false` forwarded
+  headers are ignored outright; with a hop count or address list Express
+  walks the chain from the socket outward and stops at the first untrusted
+  hop, so a client can only mint a fresh key by controlling an untrusted hop,
+  which the documentation requires preventing. The general API limiter and
+  the general auth limiter keep their default `ipKeyGenerator(req.ip, 56)`
+  key (the library default, including its safety validations).
+- **Dedicated login limiter** (`loginRateLimit`,
+  `server/src/middleware/rateLimit.ts`): a stricter limiter mounted only on
+  `POST /api/auth/login`, before the existing `authRateLimit` (5G-6 keeps the
+  general auth limiter on every auth route unchanged). Limits: 20 attempts /
+  15 min per key in development, 5 in production — stricter than both
+  `authRateLimit` (100/20) and `apiRateLimit` (500/100). The key is
+  `JSON.stringify(['login', normalizedEmail, ipKeyGenerator(req.ip, 56)])`:
+  - the email is normalized exactly like the login path
+    (`trim().toLowerCase()`, matching `loginSchema` and `findUserByEmail`), so
+    casing/whitespace variants share one bucket;
+  - the IP part is `req.ip` under the trust boundary — a forwarded header is
+    never read directly by the limiter;
+  - JSON encoding makes the key unambiguous, so an email cannot contain a
+    separator that forges another client's key;
+  - a missing/unusable email falls back to an IP-only key instead of minting
+    unbounded distinct keys;
+  - the limiter runs before schema validation and before any account lookup,
+    so the budget is identical whether or not the account exists and the 429
+    body is the shared generic `RATE_LIMIT_EXCEEDED` payload with no email or
+    account-existence signal.
+- **Login timing enumeration (H-8)**: `login` previously failed fast when
+  `findUserByEmail` returned nothing and only ran Argon2 for existing
+  accounts, making account existence observable from response time. The
+  unknown-email branch now runs exactly one `argon2.verify` against
+  `DUMMY_PASSWORD_HASH` (`server/src/services/authService.ts`) — a valid
+  argon2id hash with the exact `hashPassword` parameters (`m=65536,p=1,t=3`)
+  of a discarded random string — then throws the same 401
+  `INVALID_CREDENTIALS`. Both failure branches now perform one Argon2
+  verification; no externally visible authentication behaviour changed.
+- **Response conventions**: the login limiter reuses the exact 429 payload of
+  the other limiters (`success: false`, `error.code: 'RATE_LIMIT_EXCEEDED'`)
+  and the same draft-6 `RateLimit-*` headers, so no client-visible contract
+  changed.
+- **Tests**: `server/tests/loginRateLimit.test.ts` covers key derivation
+  (normalization, email/IP separation, separator-forging, IP fallback), the
+  real login route (stricter dedicated limit, payload conventions, other auth
+  routes unaffected, no email leak), and identity under both trust models
+  (distinct clients behind one trusted proxy, shared normalized bucket,
+  forged left-most `X-Forwarded-For` under a trusted hop count, rotated
+  untrusted headers with trust disabled).
+  `server/tests/loginTiming.test.ts` covers the one-verification-per-branch
+  invariant and the dummy hash parameters; `server/tests/rateLimit.test.ts`
+  additionally resets the login bucket alongside the existing limiters.
+  Existing trust-proxy, rate-limit, auth, security-header, 5G.3, 5G.4 and
+  5G.5 suites are unchanged and remain green.
+- **Out of scope**: no shared/distributed rate-limit store, no TRUST_PROXY
+  hop-count choice, no changes to JWT/session architecture, and no other
+  authentication endpoints receive the email-keyed limiter.
+
 ## Design Principles
 
 - Separation of concerns

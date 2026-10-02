@@ -216,7 +216,33 @@ it — otherwise a client connecting straight to the app can forge its own
 `X-Forwarded-For` entry. Because the topology is not yet known, `TRUST_PROXY`
 stays unset.
 
-**Rate-limit store.** `authRateLimit` and `apiRateLimit`
+**Rate-limit client identity.** Every limiter keys off `req.ip`, which Express
+derives from the configured `trust proxy` boundary — never from a raw
+`X-Forwarded-For` entry. With the default `TRUST_PROXY=false` all requests
+share the TCP socket address, so rate-limit identity only becomes per-client
+once `TRUST_PROXY` matches the real proxy chain.
+
+**Login rate limiting.** `POST /api/auth/login` runs a dedicated, stricter
+`loginRateLimit` in addition to `authRateLimit`:
+20 attempts / 15 min per key in development, 5 in production, versus 100/20
+for `authRateLimit` and 500/100 for `apiRateLimit`. Its key is the submitted
+email normalized exactly like the login path (`trim().toLowerCase()`) combined
+with `ipKeyGenerator(req.ip, 56)` — the trusted client IP, never a forwarded
+header read outside Express's trust boundary. The limiter runs before schema
+validation and before any account lookup, so the budget is identical whether
+or not the account exists (no account-existence oracle), and the 429 payload
+is the same generic `RATE_LIMIT_EXCEEDED` response used everywhere else. Every
+other auth route (register, refresh, logout, logout-all, me) keeps the
+IP-only `authRateLimit`.
+
+**Login timing.** When an account does not exist, the login handler still
+performs exactly one Argon2 verification against a fixed dummy hash with the
+same parameters as real password hashes, so the unknown-email path and the
+wrong-password path do the same work and response timing does not reveal
+whether an account exists. The outcome is unchanged: the same
+401 `INVALID_CREDENTIALS` either way.
+
+**Rate-limit store.** `authRateLimit`, `loginRateLimit` and `apiRateLimit`
 (`server/src/middleware/rateLimit.ts`) use express-rate-limit's default
 in-process `MemoryStore`. Counters are process-local: they reset on restart and
 are not shared between instances, so a multi-instance deployment would give
