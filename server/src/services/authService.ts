@@ -18,6 +18,18 @@ export async function hashPassword(password: string): Promise<string> {
   });
 }
 
+/**
+ * A valid argon2id hash (identical parameters to `hashPassword`) of an
+ * unguessable random string whose plaintext no longer exists anywhere. The
+ * login handler verifies the submitted password against it when the account
+ * does not exist, so the "unknown email" path performs exactly one Argon2
+ * verification just like the "wrong password" path and response timing does
+ * not reveal whether an account exists. It is not a secret — it cannot be
+ * used to authenticate as anyone.
+ */
+export const DUMMY_PASSWORD_HASH =
+  '$argon2id$v=19$m=65536,p=1,t=3$Z29Do0+g5A6tAoOHh9M4eA$Z6hqRu8mLt5DKlFXbjb4PM1arxhZqoc9w3hOcnS8/Tg';
+
 export async function verifyPassword(hash: string, password: string): Promise<boolean> {
   try {
     return await argon2.verify(hash, password);
@@ -102,6 +114,7 @@ function toAuthenticatedUser(user: {
 export const authService = {
   hashPassword,
   verifyPassword,
+  DUMMY_PASSWORD_HASH,
   generateAccessToken,
   generateRefreshToken,
   hashRefreshToken,

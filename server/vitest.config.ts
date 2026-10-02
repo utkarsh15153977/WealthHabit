@@ -1,42 +1,22 @@
 import { defineConfig } from 'vitest/config';
 import { config } from 'dotenv';
+import { resolveTestDatabaseUrl } from './scripts/lib/dbSafety.js';
 
 config();
 
-function deriveTestDatabaseUrl(): string {
-  const explicit = process.env.TEST_DATABASE_URL;
-  if (explicit) {
-    return explicit;
-  }
-
-  const configured = process.env.DATABASE_URL;
-  if (!configured) {
-    throw new Error(
-      'DATABASE_URL is not set. Copy server/.env.example to server/.env, or set TEST_DATABASE_URL.'
-    );
-  }
-
-  const url = new URL(configured);
-  const databaseName = url.pathname.replace(/^\//, '');
-
-  if (!databaseName) {
-    throw new Error('DATABASE_URL does not contain a database name.');
-  }
-
-  if (!databaseName.endsWith('_test')) {
-    url.pathname = `/${databaseName}_test`;
-  }
-
-  return url.toString();
-}
-
-const testDatabaseUrl = deriveTestDatabaseUrl();
+const testDatabaseUrl = resolveTestDatabaseUrl(process.env, {
+  onSkipConfigured: (target) =>
+    console.warn(
+      `[db-safety] Ignoring DATABASE_URL target "${target}"; tests use the safe local test database.`
+    ),
+});
 
 export default defineConfig({
   test: {
     globals: true,
     environment: 'node',
     env: {
+      NODE_ENV: 'test',
       DATABASE_URL: testDatabaseUrl,
     },
     setupFiles: ['./tests/setup.ts'],

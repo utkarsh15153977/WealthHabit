@@ -1,7 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
-import { MemoryRouter } from 'react-router-dom';
+import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { AppLayout } from '../components/layout/AppLayout';
+import { RequireAdmin } from '../components/RequireAdmin';
 import { AdminDashboard } from './AdminDashboard';
 import { getAdminDashboard } from '../services/adminDashboardApi';
 import { getMyProfile } from '../services/userApi';
@@ -15,9 +16,22 @@ vi.mock('../services/userApi', () => ({
   getMyProfile: vi.fn(),
 }));
 
+const authState = vi.hoisted(() => ({
+  user: {
+    id: 'u1',
+    firstName: 'Admin',
+    lastName: 'User',
+    email: 'admin@example.com',
+    role: 'ADMIN',
+    status: 'ACTIVE',
+  } as { id: string; role: string } | null,
+}));
+
 vi.mock('../context/useAuth', () => ({
   useAuth: () => ({
-    user: { id: 'u1', firstName: 'Admin', lastName: 'User', email: 'admin@example.com', role: 'ADMIN', status: 'ACTIVE' },
+    user: authState.user,
+    isAuthenticated: authState.user !== null,
+    isLoading: false,
     logout: vi.fn(),
     updateUser: vi.fn(),
   }),
@@ -212,5 +226,51 @@ describe('AdminDashboard page', () => {
     const pageText = document.body.textContent ?? '';
     expect(pageText).not.toMatch(/\$[\d,]+\.\d{2}/); // no dollar amounts
     expect(pageText).not.toMatch(/\d+\.\d{2}/); // no decimal amounts
+  });
+});
+
+describe('RequireAdmin access for /admin/dashboard', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  function renderRoute(user: { id: string; role: string } | null) {
+    authState.user = user;
+    render(
+      <MemoryRouter initialEntries={['/admin/dashboard']}>
+        <Routes>
+          <Route
+            path="/admin/dashboard"
+            element={
+              <RequireAdmin>
+                <div data-testid="admin-dashboard-page">admin dashboard</div>
+              </RequireAdmin>
+            }
+          />
+          <Route path="/login" element={<div data-testid="login-page">login</div>} />
+          <Route
+            path="/dashboard"
+            element={<div data-testid="user-dashboard-page">user dashboard</div>}
+          />
+        </Routes>
+      </MemoryRouter>
+    );
+  }
+
+  it('redirects anonymous visitors to login', async () => {
+    renderRoute(null);
+    expect(await screen.findByTestId('login-page')).toBeDefined();
+    expect(screen.queryByTestId('admin-dashboard-page')).toBeNull();
+  });
+
+  it('redirects a normal USER away', async () => {
+    renderRoute({ id: 'u2', role: 'USER' });
+    expect(await screen.findByTestId('user-dashboard-page')).toBeDefined();
+    expect(screen.queryByTestId('admin-dashboard-page')).toBeNull();
+  });
+
+  it('allows an ADMIN through', async () => {
+    renderRoute({ id: 'u1', role: 'ADMIN' });
+    expect(await screen.findByTestId('admin-dashboard-page')).toBeDefined();
   });
 });

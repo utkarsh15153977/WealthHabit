@@ -171,6 +171,7 @@ WealthHabit/
 | NODE_ENV | Environment mode | development |
 | CLIENT_URL | Frontend URL for CORS | http://localhost:5173 |
 | VITE_API_BASE_URL | Frontend API base URL | http://localhost:5000/api |
+| TRUST_PROXY | Reverse-proxy trust for `X-Forwarded-For` (`false`, hop count, or proxy-addr list). Never `true` | false |
 
 ### Client (client/.env)
 | Variable | Description |
@@ -184,6 +185,83 @@ WealthHabit/
 | NODE_ENV | Environment mode |
 | DATABASE_URL | PostgreSQL connection string |
 | CLIENT_URL | Frontend URL for CORS |
+| TRUST_PROXY | Reverse-proxy trust for `X-Forwarded-For`. Never `true` |
+
+### Reverse Proxy, Rate Limiting & HTTPS Prerequisites
+
+**`TRUST_PROXY` behaviour.** `TRUST_PROXY` is passed straight to Express as
+`app.set('trust proxy', ...)` (see `server/src/config/index.ts` and
+`server/src/app.ts`). The resolver:
+
+| Value | Result |
+|-------|--------|
+| unset / empty / `false` / `0` | `false` — `X-Forwarded-For` ignored, `req.ip` comes from the TCP socket (default, current behaviour) |
+| positive integer (`1`, `2`, …) | trusted proxy hop count |
+| proxy-addr list (`loopback`, `loopback,uniquelocal`, `10.0.0.0/8`, `192.168.0.0/255.255.0.0`) | trusted address/range list |
+| literal `true` (any casing) | **rejected** — falls back to `false` with a startup warning |
+| anything else (garbage, `yes`, `-1`, `2.5`, trailing comma, out-of-range prefix) | falls back to `false` with a startup warning |
+
+Never set `TRUST_PROXY=true`: permissive trust makes `req.ip` equal the
+left-most `X-Forwarded-For` entry, which any client can forge, giving every
+attacker an unlimited supply of fresh rate-limit keys.
+
+**`X-Forwarded-For` trust boundary.** `X-Forwarded-For` is only consulted when
+`TRUST_PROXY` is a hop count or an address list, and Express then walks the
+chain from the socket outward, stopping at the first untrusted hop. The
+configured value must match the **real** deployment topology: too few hops and
+the real client IP is lost; too many hops and client-forged left-most entries
+become authoritative again. When a numeric hop count is used, **direct client
+access to the application must be prevented** so that only the proxy can reach
+it — otherwise a client connecting straight to the app can forge its own
+`X-Forwarded-For` entry. Because the topology is not yet known, `TRUST_PROXY`
+stays unset.
+
+**Rate-limit client identity.** Every limiter keys off `req.ip`, which Express
+derives from the configured `trust proxy` boundary — never from a raw
+`X-Forwarded-For` entry. With the default `TRUST_PROXY=false` all requests
+share the TCP socket address, so rate-limit identity only becomes per-client
+once `TRUST_PROXY` matches the real proxy chain.
+
+**Login rate limiting.** `POST /api/auth/login` runs a dedicated, stricter
+`loginRateLimit` in addition to `authRateLimit`:
+20 attempts / 15 min per key in development, 5 in production, versus 100/20
+for `authRateLimit` and 500/100 for `apiRateLimit`. Its key is the submitted
+email normalized exactly like the login path (`trim().toLowerCase()`) combined
+with `ipKeyGenerator(req.ip, 56)` — the trusted client IP, never a forwarded
+header read outside Express's trust boundary. The limiter runs before schema
+validation and before any account lookup, so the budget is identical whether
+or not the account exists (no account-existence oracle), and the 429 payload
+is the same generic `RATE_LIMIT_EXCEEDED` response used everywhere else. Every
+other auth route (register, refresh, logout, logout-all, me) keeps the
+IP-only `authRateLimit`.
+
+**Login timing.** When an account does not exist, the login handler still
+performs exactly one Argon2 verification against a fixed dummy hash with the
+same parameters as real password hashes, so the unknown-email path and the
+wrong-password path do the same work and response timing does not reveal
+whether an account exists. The outcome is unchanged: the same
+401 `INVALID_CREDENTIALS` either way.
+
+**Rate-limit store.** `authRateLimit`, `loginRateLimit` and `apiRateLimit`
+(`server/src/middleware/rateLimit.ts`) use express-rate-limit's default
+in-process `MemoryStore`. Counters are process-local: they reset on restart and
+are not shared between instances, so a multi-instance deployment would give
+each instance its own full budget. A shared store (e.g. Redis) is deliberately
+not part of the project yet and must not be added until the deployment topology
+and instance count are known.
+
+**HTTPS prerequisites.** Three production behaviours assume HTTPS and only
+activate once TLS is actually terminated in front of (or by) the application:
+
+| Feature | Where | Prerequisite |
+|---------|-------|--------------|
+| `Strict-Transport-Security` header | `server/src/config/securityHeaders.ts` | `NODE_ENV=production` **and** the response must be served over HTTPS, otherwise browsers ignore (or discard) the header |
+| `upgrade-insecure-requests` CSP directive | `server/src/config/securityHeaders.ts` | `NODE_ENV=production` **and** HTTPS on the origin; on plain HTTP it would rewrite requests to a scheme the origin does not serve |
+| `COOKIE_SECURE=true` on the refresh cookie | `server/src/config/index.ts` | forced in `NODE_ENV=production`; cookies with `Secure` are never sent over plain HTTP, so the refresh flow needs HTTPS end-to-end |
+
+TLS termination itself is not implemented here — it is a deployment concern
+that must be resolved together with `TRUST_PROXY`.
+
 
 ## Available Scripts
 
@@ -353,7 +431,8 @@ Implemented:
   `200 alreadyJoined` after). Challenges are informational only: no XP,
   leaderboards, rewards, notifications or scheduler, and they never create or
   mutate transactions, budgets, bills, subscriptions, recurring rules or habit
-  completions. Admin creation/management is API-only for now (no admin UI);
+  completions. Admin creation/management is available from the
+  `/admin/challenges` admin UI as well as the ADMIN-only API;
   tests promote users to `ADMIN` via controlled SQL setup.
 - ✅ **Savings goals** — goal CRUD with per-goal contributions
   (`GET/POST /api/goals`, `GET/PATCH/DELETE /api/goals/:id`,
@@ -451,6 +530,18 @@ Implemented:
   range presets, all sections, loading/error/empty/retry states, CSV/PDF
   download buttons, and a `Reports` nav item on every page.
   - ✅ Server test suite (876 tests) + client unit tests (140 tests)
+- ✅ **App layout & navigation** — every signed-in page (including all five
+  admin pages) renders inside the shared `AppLayout`
+  (`client/src/components/layout/AppLayout.tsx`): a sticky `Header` plus a
+  collapsible left `Sidebar` driven by a single navigation array
+  (`client/src/components/layout/navConfig.ts`). Desktop uses a compact
+  (icon-only, `title` tooltip) or expanded sidebar persisted in
+  `localStorage` (`wealthhabit.sidebar.open` — a boolean only, no user or
+  security data); below 1024px the sidebar becomes an overlay drawer with a
+  backdrop, Escape-to-close, body-scroll lock and close-on-navigate. Active
+  routes are marked with `aria-current="page"`. The `Admin` group (Admin,
+  Admin Users, Admin Challenges, Audit Logs, System Health) is included only
+  when `user.role === 'ADMIN'`.
 - ✅ **Admin Authorization** — centralized RBAC with `USER`/`ADMIN` roles:
   - `requireAdmin` middleware protects admin-only endpoints
   - Anonymous requests → 401
@@ -459,8 +550,13 @@ Implemented:
   - Role sourced from authenticated JWT (validated against DB), never from client headers/body/query
   - Self-escalation prevented: registration defaults to `USER`, profile updates cannot modify role
   - Suspended/deactivated accounts blocked at auth layer (403)
-  - **Admin-only endpoints**: `POST/PATCH/DELETE /api/challenges` (challenge management)
-  - Frontend: `RequireAdmin` route guard for future admin pages
+  - **Admin-only endpoints**: `POST/PATCH/DELETE /api/challenges` (challenge
+    management) plus every `/api/admin/*` route — all follow the same
+    `authenticate → requireAdmin → [Zod validate] → controller → service`
+    chain, with no page-specific authentication mechanism
+  - Frontend: `RequireAdmin` route guard for every admin page
+    (`/admin`, `/admin/users`, `/admin/audit-logs`, `/admin/challenges`,
+    `/admin/system-health`)
 - ✅ **Admin Dashboard** — `GET /api/admin/dashboard` (ADMIN-only operational
   overview: user counts, record counts and application metrics) with the
   `/admin` page behind `RequireAdmin` (loading/error/retry states, no
@@ -485,7 +581,7 @@ Implemented:
   - Credentials (`passwordHash`, refresh/session hashes, tokens) are never
     returned; status/role changes never delete financial records; sensitive
     mutations write `ADMIN_USER_STATUS_CHANGED`/`ADMIN_USER_ROLE_CHANGED`
-    audit entries (full audit-log UI remains Phase 5F-4)
+    audit entries (queryable and displayed by the Phase 5F-4 audit-log UI)
 - ✅ **Audit log management** — `/admin/audit-logs` page (behind
   `RequireAdmin`, linked from the Admin dashboard) plus the ADMIN-only,
   read-only API `GET /api/admin/audit-logs`:
@@ -560,5 +656,28 @@ Implemented:
   - Scope: application-level operational health only — it does not provide
     Kubernetes health probes, Prometheus metrics, Grafana monitoring,
     external uptime monitoring or automatic alerting
+- ✅ **Admin routes & audit coverage** — the five admin destinations are
+  `/admin`, `/admin/users`, `/admin/challenges`, `/admin/audit-logs` and
+  `/admin/system-health`; each is lazy-loaded behind `RequireAdmin` and
+  wrapped in `AppLayout`, and all five appear in the sidebar's `Admin`
+  group (the Admin Dashboard additionally links to the other four as
+  shortcuts). Backend routes:
 
-Next milestone: **to be planned** (Phases 1, 2, 3A–3C, 4A, 4B, 4C, 5A, 5B, 5C, 5D, 5F-1, 5F-2, 5F-3, 5F-4, 5F-5 and 5F-6 delivered)
+  | Surface | Route | Methods |
+  | --- | --- | --- |
+  | Dashboard | `GET /api/admin/dashboard` | GET only, read-only, unaudited |
+  | User management | `GET /api/admin/users`, `GET /api/admin/users/:id`, `PATCH /api/admin/users/:id/status`, `PATCH /api/admin/users/:id/role` | audited on PATCH |
+  | Audit logs | `GET /api/admin/audit-logs` | GET only, read-only, unaudited |
+  | Challenge administration | `GET /api/admin/challenges`, `GET /api/admin/challenges/:id` (reads) + `POST/PATCH/DELETE /api/challenges` (mutations) | audited on mutation |
+  | System health | `GET /api/admin/system-health` | GET only, read-only, unaudited |
+
+  Audit coverage: `ADMIN_USER_STATUS_CHANGED`, `ADMIN_USER_ROLE_CHANGED`,
+  `ADMIN_CHALLENGE_CREATED`, `ADMIN_CHALLENGE_UPDATED` and
+  `ADMIN_CHALLENGE_DELETED` (activation flips are audited as
+  `ADMIN_CHALLENGE_UPDATED` with `previousIsActive`/`newIsActive`). Reads —
+  dashboard, user list/detail, challenge list/detail, audit-log queries and
+  system health — never write audit rows, so there is no recursive
+  audit-of-audit noise. Dashboard, Audit Logs and System Health are
+  read-only: loading them mutates nothing.
+
+Next milestone: **to be planned** (Phases 1, 2, 3A–3C, 4A, 4B, 4C, 5A, 5B, 5C, 5D, 5F-1, 5F-2, 5F-3, 5F-4, 5F-5, 5F-6 and 5F-7 delivered)

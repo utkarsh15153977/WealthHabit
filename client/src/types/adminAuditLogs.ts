@@ -6,6 +6,9 @@
 export const AUDIT_ACTIONS = [
   'ADMIN_USER_STATUS_CHANGED',
   'ADMIN_USER_ROLE_CHANGED',
+  'ADMIN_CHALLENGE_CREATED',
+  'ADMIN_CHALLENGE_UPDATED',
+  'ADMIN_CHALLENGE_DELETED',
 ] as const;
 
 export type AuditAction = (typeof AUDIT_ACTIONS)[number];

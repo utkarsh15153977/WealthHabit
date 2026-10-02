@@ -35,7 +35,7 @@ WealthHabit follows a monorepo architecture with clear separation between fronte
 
 ### Key Directories
 - `src/components/` - Reusable UI components
-- `src/layouts/` - Page layouts (auth, dashboard, etc.)
+- `src/components/layout/` - Shared app shell (`AppLayout`, `Header`, `Sidebar`, `navConfig`)
 - `src/pages/` - Page components
 - `src/routes/` - Route configuration and guards
 - `src/services/` - API service layer
@@ -515,6 +515,41 @@ channel.
   report sections, loading/error/empty/retry states, CSV/PDF download
   buttons, and a `Reports` nav item on every page.
 
+## App Layout & Navigation
+
+- **Shell**: every authenticated route in `client/src/routes/index.tsx` is
+  rendered as `guard → AppLayout → lazy page`, where the guard is
+  `ProtectedRoute` for user pages and `RequireAdmin` for admin pages. There
+  is exactly one layout component (`client/src/components/layout/AppLayout.tsx`)
+  — no page carries its own sidebar or top bar.
+- **Sidebar navigation** is a single array-driven structure in
+  `client/src/components/layout/navConfig.ts`:
+  `primaryNavGroup`, `wealthNavGroup`, `adminNavGroup`, `accountNavGroup`,
+  exposed through `getNavGroups(isAdmin)`. `adminNavGroup` lists Admin,
+  Admin Users, Admin Challenges, Audit Logs and System Health; it is
+  appended **only** when `user.role === 'ADMIN'`, so a `USER` never sees
+  admin destinations. No second navigation array exists anywhere else.
+- **Active state**: `Sidebar` compares `location.pathname` with each item's
+  `href` and sets `aria-current="page"`; `/admin` and `/admin/users` are
+  distinct entries, so highlighting is exact rather than prefix-based.
+- **Desktop**: the sidebar is either compact (68px, icon-only links with a
+  `title` tooltip) or expanded (268px, labels + group headings). The choice
+  is persisted in `localStorage` under `wealthhabit.sidebar.open` as the
+  string `"true"`/`"false"` only — no user, role or security data is stored,
+  and unreadable/invalid values fall back to collapsed.
+- **Mobile (< 1024px)**: the sidebar renders as an overlay drawer
+  (`translate-x`) with a backdrop (`data-testid="sidebar-backdrop"`), body
+  scroll lock, Escape-to-close, backdrop click-to-close and
+  close-on-navigate. It always starts closed on mobile regardless of the
+  stored desktop preference.
+- **Header**: sticky, contains the sidebar toggle
+  (`aria-expanded`/`aria-controls="app-sidebar"`), brand link, user name,
+  notification bell and sign-out. Content is padded with `lg:pl-[268px]`
+  (expanded) or `lg:pl-[68px]` (compact), so the fixed sidebar never
+  overlaps page content and no horizontal scrollbar is introduced.
+- **Read-only by storage**: nothing security- or finance-related is written
+  to `localStorage` by the layout.
+
 ## Admin Authorization
 
 - **Role model**: `Role` enum (`USER`, `ADMIN`) in Prisma schema; `User.role` defaults to `USER`.
@@ -532,7 +567,7 @@ channel.
   - No public role-management API; role changes only via the ADMIN-only
     `PATCH /api/admin/users/:id/role` operation (Phase 5F-3); `ADMIN`
     promotion no longer requires raw SQL
-- **Admin-only endpoints** (Phase 5F-1 / 5F-2 / 5F-3 / 5F-5):
+- **Admin-only endpoints** (Phase 5F-1 … 5F-6):
   - `POST /api/challenges` — create challenge
   - `PATCH /api/challenges/:id` — update challenge
   - `DELETE /api/challenges/:id` — delete challenge
@@ -552,7 +587,38 @@ channel.
   - `DELETE /api/challenges/:id/leave` — leave challenge
   - `GET /api/challenges/:id/progress` — get progress
   - `POST /api/challenges/:id/requirements/:requirementId/habit` — map requirement habit
-- **Frontend**: `RequireAdmin` route guard (`client/src/components/RequireAdmin.tsx`) guards `/admin` (operational dashboard, 5F-2), `/admin/users` (user management, 5F-3), `/admin/audit-logs` (audit log, 5F-4), `/admin/challenges` (challenge administration, 5F-5) and `/admin/system-health` (system health, 5F-6); backend remains authoritative security boundary.
+- **Frontend**: `RequireAdmin` route guard (`client/src/components/RequireAdmin.tsx`) guards `/admin` (operational dashboard, 5F-2), `/admin/users` (user management, 5F-3), `/admin/audit-logs` (audit log, 5F-4), `/admin/challenges` (challenge administration, 5F-5) and `/admin/system-health` (system health, 5F-6); each route renders inside the shared `AppLayout` and all five are listed in the sidebar's `Admin` group (shown only to `ADMIN` users); backend remains authoritative security boundary.
+
+## Admin Dashboard (Phase 5F-2)
+
+- **Endpoint**: `GET /api/admin/dashboard` in
+  `server/src/routes/adminDashboardRoutes.ts` — `authenticate →
+  requireAdmin → asyncHandler` (no query or body, so no validation schema),
+  mounted as `app.use('/api/admin', adminDashboardRoutes)` in
+  `server/src/app.ts`. GET only: `POST`/`PATCH`/`PUT`/`DELETE` → 404.
+- **Read-only and unaudited**: the service (`adminDashboardService.ts`)
+  performs only `prisma.*.count()` calls; loading the dashboard writes no
+  audit row, no notification and no application data.
+- **Response**: `{ success, data: { users, financialRecords, application,
+  generatedAt } }`.
+  - `users` — `{ total, active, suspended, deactivated, admins,
+    recentlyRegistered }` (30-day window).
+  - `financialRecords` — `{ transactions, savingsGoals, assets,
+    liabilities, wealthSnapshots }` **counts only**; no amounts, balances or
+    percentages are ever computed or returned.
+  - `application` — `{ habits, challenges, notifications }` counts.
+- **UI**: `/admin` (lazy route behind `RequireAdmin`) — three metric grids
+  (User Overview, Financial Records, Application), a `Last refreshed`
+  timestamp, manual Refresh (disabled while loading), loading/error/retry
+  states, and shortcut links to Manage users, Manage challenges, Audit log
+  and System health (the sidebar already lists the same destinations; the
+  dashboard links are retained as shortcuts with distinct labels/test ids).
+- **Tests**: `client/src/pages/AdminDashboard.test.tsx` (metric grids,
+  zero values, loading/error/retry, refresh disabled while loading, no
+  dollar/decimal amounts rendered), plus
+  `npm run e2e:admin-dashboard --workspace=server` (26 checks: RBAC 401/403,
+  header/query spoofing, suspended/deactivated admins, no financial amounts,
+  reads create no records).
 
 ## Admin User Management (Phase 5F-3)
 
@@ -564,12 +630,12 @@ channel.
   controller → service`; registered centrally as
   `app.use('/api/admin', adminUserRoutes)` in `server/src/app.ts`.
   - `GET /api/admin/users` — strict query: `page` ≥ 1 (default 1),
-    `pageSize` 1–50 (default 10), `search` ≤ 100 chars, `role` in
+    `pageSize` 1–50 (default 20), `search` ≤ 100 chars, `role` in
     `USER|ADMIN`, `status` in `ACTIVE|SUSPENDED|DEACTIVATED`; unknown
-    parameters → 400 `VALIDATION_ERROR`. Returns `{ items, pagination }`
-    with a safe summary per user (id, name, email, role, status, email
-    verification, last login, created/updated timestamps) — never
-    `passwordHash`, session/refresh hashes or tokens.
+    parameters → 400 `VALIDATION_ERROR`. Returns `{ users, page, pageSize,
+    total, totalPages }` with a safe summary per user (`id`, `email`,
+    `firstName`, `lastName`, `role`, `status`, `lastLoginAt`, `createdAt`,
+    `updatedAt`) — never `passwordHash`, session/refresh hashes or tokens.
   - `GET /api/admin/users/:id` — safe detail: profile fields plus
     operational counts (transactions, goals, assets, liabilities, habits,
     challenge participations) and nothing monetary; missing/malformed id →
@@ -599,8 +665,8 @@ channel.
   `server/src/services/auditLogService.ts` writes `ADMIN_USER_STATUS_CHANGED`
   and `ADMIN_USER_ROLE_CHANGED` rows atomically with the mutation (metadata:
   ids, from/to, revoked session count; never credentials or financial
-  values). This is a minimal integration only — the audit-log query/UI is
-  Phase 5F-4.
+  values). Both actions are queryable through `GET /api/admin/audit-logs`
+  and rendered by the Phase 5F-4 audit-log UI.
 - **Data safety**: status/role changes touch only `users` rows, sessions and
   audit rows — transactions, goals, assets, liabilities, habits and
   challenge data are never deleted or modified (asserted by tests and
@@ -629,7 +695,7 @@ channel.
   - `ADMIN_USER_ROLE_CHANGED` — metadata `{ targetUserId, from, to }`,
     written inside the same transaction as the role update (5F-3).
   5F-4 adds no new writers and no reads that write (no recursive
-  audit-of-audit entries). Phase 5F-5 later appends the three challenge
+  audit-of-audit entries). Phase 5F-5 appends the three challenge
   actions (`ADMIN_CHALLENGE_CREATED` / `ADMIN_CHALLENGE_UPDATED` /
   `ADMIN_CHALLENGE_DELETED`) to this same set — documented in the
   Challenge Administration section below; because the API's action filter
@@ -676,7 +742,10 @@ channel.
   audit metadata.
 - **UI**: `/admin/audit-logs` (lazy route behind `RequireAdmin`, linked from
   the Admin dashboard) — debounced search over actor/target names and email,
-  action select derived from `AUDIT_ACTIONS`, actor/target id inputs, date
+  action select derived from `AUDIT_ACTIONS` in
+  `client/src/types/adminAuditLogs.ts` (kept in sync with the server's
+  `AuditActions`, so all five current actions are selectable), actor/target
+  id inputs, date
   inputs with explicit Apply/Clear, desktop table and mobile cards
   (Timestamp | Action | Actor | Target | Details), a read-only detail dialog
   (action, formatted + ISO timestamp, actor, target, entity, pretty-printed
@@ -848,6 +917,182 @@ channel.
   `RequireAdmin` access, out-of-schema values never rendered). Live:
   `npm run e2e:admin-system-health --workspace=server` (67 checks against
   the running API).
+
+## Security Headers & CORS (Phase 5G-2A)
+
+Every response passes through an explicit helmet configuration defined in
+`server/src/config/securityHeaders.ts` and applied first in
+`server/src/app.ts`, so health, auth, general API and `/api/admin/*`
+responses all receive the same headers.
+
+- **Pinned headers**: `X-Powered-By` is removed (`app.disable('x-powered-by')`
+  plus helmet's `xPoweredBy`), `X-Content-Type-Options: nosniff`,
+  `X-Frame-Options: SAMEORIGIN`, `Referrer-Policy: no-referrer`,
+  `Cross-Origin-Opener-Policy: same-origin`,
+  `Cross-Origin-Resource-Policy: same-origin`, `Origin-Agent-Cluster: ?1`,
+  `X-DNS-Prefetch-Control: off`, `X-Download-Options: noopen`,
+  `X-Permitted-Cross-Domain-Policies: none`, `X-XSS-Protection: 0`.
+  Every helmet option is declared explicitly so a helmet upgrade cannot
+  change the emitted headers silently; `Cross-Origin-Embedder-Policy`
+  stays disabled.
+- **Content-Security-Policy**: built with `useDefaults: false` from an
+  explicit directive set (`default-src 'self'`, `base-uri 'self'`,
+  `font-src 'self' https: data:`, `form-action 'self'`,
+  `frame-ancestors 'self'`, `img-src 'self' data:`, `object-src 'none'`,
+  `script-src 'self'`, `script-src-attr 'none'`,
+  `style-src 'self' https: 'unsafe-inline'`). Production additionally
+  sends `upgrade-insecure-requests`; development and test deliberately
+  omit it so plain-HTTP `http://localhost:5000` navigation is never
+  rewritten to `https://`. The API only emits JSON, so this policy
+  governs documents served from this origin and does not affect the Vite
+  client, which runs on its own origin.
+- **Strict-Transport-Security**: sent only when `NODE_ENV=production`
+  (`max-age=15552000; includeSubDomains`, 180 days). It is never emitted
+  in development or test, where the API is served over plain HTTP.
+- **CORS**: locked to `CLIENT_URL` with `credentials: true`, methods
+  `GET, POST, PUT, PATCH, DELETE, OPTIONS` and allowed headers
+  `Content-Type, Authorization`. The origin is supplied as an allowlist,
+  so any other origin receives no `Access-Control-Allow-Origin` header at
+  all instead of a mismatched one.
+- **Tests**: `server/tests/securityHeaders.test.ts` covers the header set
+  on normal and `/api/admin/*` responses, the absent `X-Powered-By`, the
+  environment-specific CSP and HSTS branches, and CORS preflight,
+  actual-response, foreign-origin, credentials and allowed-header
+  behaviour. `server/tests/rateLimit.test.ts` asserts the stricter
+  `authRateLimit` on every auth route.
+- **Out of scope here**: no distributed rate-limit store and no TLS
+  termination — both remain deployment concerns. `trust proxy` /
+  `X-Forwarded-For` handling is covered by the phase below.
+
+## Trust Proxy & Rate-Limit Trust Boundary (Phase 5G-2B)
+
+Deployment topology (platform, reverse proxy, hop count, TLS termination,
+instance count) is still unknown, so Phase 5G-2B adds only the
+infrastructure-independent seam: a fail-closed `TRUST_PROXY` resolver and the
+restoration of express-rate-limit's proxy safety validations.
+
+- **`TRUST_PROXY` resolver** (`server/src/config/index.ts`,
+  `resolveTrustProxy()`, exported as `env.TRUST_PROXY`): unset, empty, `false`
+  and `0` all resolve to `false`, preserving the previous behaviour exactly. A
+  positive integer resolves to a hop count; comma-separated proxy-addr values
+  (symbolic ranges `loopback` / `linklocal` / `uniquelocal`, bare addresses and
+  CIDR/netmask ranges) are validated token by token with `node:net` and
+  returned as a list. A literal `true` is **never** honoured — permissive trust
+  would make `req.ip` the left-most `X-Forwarded-For` entry, which any client
+  can forge — and any malformed value falls back to `false` with a startup
+  warning rather than throwing at `app.set`.
+- **Express wiring**: `app.set('trust proxy', env.TRUST_PROXY)` is the first
+  setting applied in `server/src/app.ts`. With the default `false` this is the
+  Express default, so `req.ip` continues to come from the TCP socket and
+  `X-Forwarded-For` is ignored.
+- **X-Forwarded-For trust boundary**: with a hop count or address list,
+  Express walks the address chain from the socket outward and stops at the
+  first untrusted hop, so a forged left-most entry cannot replace the
+  proxy-visible client IP when the hop count matches the real topology. The
+  configured value must therefore match the deployment, and clients must be
+  prevented from reaching the application directly whenever a numeric hop count
+  is used. No production value is chosen in this phase.
+- **Rate-limit safety validation**: the custom `keyGenerator` in
+  `server/src/middleware/rateLimit.ts` was removed. It produced exactly
+  `ipKeyGenerator(req.ip, 56)` — the express-rate-limit default — but by
+  replacing the default it silently disabled the library's `ip`,
+  `trustProxy`, `xForwardedForHeader` and `forwardedHeader` validations. With
+  the default restored, `TRUST_PROXY=true` (should it ever be forced) and an
+  unexpected `X-Forwarded-For` are reported instead of being ignored.
+  `windowMs`, `max`, `standardHeaders`, `legacyHeaders` and the separation of
+  `authRateLimit` / `apiRateLimit` are unchanged.
+- **Process-local store**: both limiters still use the library's in-memory
+  `MemoryStore`. Counters are per process, so they reset on restart and are not
+  shared across instances; a multi-instance deployment would multiply the
+  effective limit. No Redis or other distributed store has been added.
+- **HTTPS prerequisites**: the production-only `Strict-Transport-Security`
+  header and the `upgrade-insecure-requests` CSP directive
+  (`server/src/config/securityHeaders.ts`) and the forced `COOKIE_SECURE`
+  refresh cookie (`server/src/config/index.ts`) all assume TLS is terminated
+  in front of the application. TLS termination is not implemented here.
+- **Tests**: `server/tests/config.test.ts` covers `TRUST_PROXY` parsing;
+  `server/tests/trustProxy.test.ts` covers `req.ip` with trust disabled,
+  `trust proxy = 1`, forged left-most `X-Forwarded-For`, rejection of
+  permissive trust and the restored express-rate-limit validations;
+  `server/tests/rateLimit.test.ts` covers the six auth routes, limiter
+  separation and the process-local store.
+- **Deferred until topology is known**: the live `TRUST_PROXY` value, a
+  shared/distributed rate-limit store, TLS termination and any reverse-proxy,
+  container or CI/CD configuration.
+
+## Deployment-Aware Rate Limiting & Login Hardening (Phase 5G-6)
+
+Phase 5G-2B already provides the fail-closed `TRUST_PROXY` resolver, the
+`app.set('trust proxy', env.TRUST_PROXY)` wiring and express-rate-limit's proxy
+validations. Phase 5G-6 closes the remaining production-hardening audit
+findings (H-3 and part of H-8) on top of that seam.
+
+- **Topology discovery**: the repository still does not establish a production
+  proxy topology — `docker-compose.yml` runs only PostgreSQL, and
+  `docs/architecture.md`, the README and the environment examples all defer
+  the platform/proxy/hop-count decision. No hop count is therefore invented:
+  `TRUST_PROXY` keeps its safe `false` default, stays environment-driven and
+  invalid values keep failing closed to `false` with a startup warning
+  (covered by `server/tests/config.test.ts`). The production value must be
+  set to match the real proxy chain; until then every client shares the
+  socket address as its rate-limit identity.
+- **Rate-limit client identity**: all three limiters key off `req.ip`, which
+  Express derives from the configured trust boundary — never from a raw
+  `X-Forwarded-For` or `X-Real-IP` header. With `TRUST_PROXY=false` forwarded
+  headers are ignored outright; with a hop count or address list Express
+  walks the chain from the socket outward and stops at the first untrusted
+  hop, so a client can only mint a fresh key by controlling an untrusted hop,
+  which the documentation requires preventing. The general API limiter and
+  the general auth limiter keep their default `ipKeyGenerator(req.ip, 56)`
+  key (the library default, including its safety validations).
+- **Dedicated login limiter** (`loginRateLimit`,
+  `server/src/middleware/rateLimit.ts`): a stricter limiter mounted only on
+  `POST /api/auth/login`, before the existing `authRateLimit` (5G-6 keeps the
+  general auth limiter on every auth route unchanged). Limits: 20 attempts /
+  15 min per key in development, 5 in production — stricter than both
+  `authRateLimit` (100/20) and `apiRateLimit` (500/100). The key is
+  `JSON.stringify(['login', normalizedEmail, ipKeyGenerator(req.ip, 56)])`:
+  - the email is normalized exactly like the login path
+    (`trim().toLowerCase()`, matching `loginSchema` and `findUserByEmail`), so
+    casing/whitespace variants share one bucket;
+  - the IP part is `req.ip` under the trust boundary — a forwarded header is
+    never read directly by the limiter;
+  - JSON encoding makes the key unambiguous, so an email cannot contain a
+    separator that forges another client's key;
+  - a missing/unusable email falls back to an IP-only key instead of minting
+    unbounded distinct keys;
+  - the limiter runs before schema validation and before any account lookup,
+    so the budget is identical whether or not the account exists and the 429
+    body is the shared generic `RATE_LIMIT_EXCEEDED` payload with no email or
+    account-existence signal.
+- **Login timing enumeration (H-8)**: `login` previously failed fast when
+  `findUserByEmail` returned nothing and only ran Argon2 for existing
+  accounts, making account existence observable from response time. The
+  unknown-email branch now runs exactly one `argon2.verify` against
+  `DUMMY_PASSWORD_HASH` (`server/src/services/authService.ts`) — a valid
+  argon2id hash with the exact `hashPassword` parameters (`m=65536,p=1,t=3`)
+  of a discarded random string — then throws the same 401
+  `INVALID_CREDENTIALS`. Both failure branches now perform one Argon2
+  verification; no externally visible authentication behaviour changed.
+- **Response conventions**: the login limiter reuses the exact 429 payload of
+  the other limiters (`success: false`, `error.code: 'RATE_LIMIT_EXCEEDED'`)
+  and the same draft-6 `RateLimit-*` headers, so no client-visible contract
+  changed.
+- **Tests**: `server/tests/loginRateLimit.test.ts` covers key derivation
+  (normalization, email/IP separation, separator-forging, IP fallback), the
+  real login route (stricter dedicated limit, payload conventions, other auth
+  routes unaffected, no email leak), and identity under both trust models
+  (distinct clients behind one trusted proxy, shared normalized bucket,
+  forged left-most `X-Forwarded-For` under a trusted hop count, rotated
+  untrusted headers with trust disabled).
+  `server/tests/loginTiming.test.ts` covers the one-verification-per-branch
+  invariant and the dummy hash parameters; `server/tests/rateLimit.test.ts`
+  additionally resets the login bucket alongside the existing limiters.
+  Existing trust-proxy, rate-limit, auth, security-header, 5G.3, 5G.4 and
+  5G.5 suites are unchanged and remain green.
+- **Out of scope**: no shared/distributed rate-limit store, no TRUST_PROXY
+  hop-count choice, no changes to JWT/session architecture, and no other
+  authentication endpoints receive the email-keyed limiter.
 
 ## Design Principles
 

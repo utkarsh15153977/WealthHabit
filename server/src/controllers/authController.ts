@@ -69,6 +69,10 @@ export async function login(
   const user = await findUserByEmail(input.email);
 
   if (!user) {
+    // Burn the same single Argon2 verification as the wrong-password path so
+    // response timing does not reveal that the account does not exist. The
+    // outcome is unchanged: the same 401 INVALID_CREDENTIALS either way.
+    await authService.verifyPassword(authService.DUMMY_PASSWORD_HASH, input.password);
     throw new AppError('Invalid email or password', 401, undefined, AuthErrorCodes.INVALID_CREDENTIALS);
   }
 

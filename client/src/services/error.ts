@@ -31,6 +31,7 @@ const CODE_MESSAGES: Record<string, string> = {
   ASSET_NOT_FOUND: 'This asset no longer exists',
   LIABILITY_NOT_FOUND: 'This liability no longer exists',
   WEALTH_SNAPSHOT_NOT_FOUND: 'This wealth snapshot no longer exists',
+  CHALLENGE_NOT_FOUND: 'This challenge no longer exists',
   USER_NOT_FOUND: 'This user no longer exists',
   ADMIN_SELF_STATUS_CHANGE: 'You cannot suspend or deactivate your own account',
   INVALID_STATUS_TRANSITION: 'This account status change is not allowed',

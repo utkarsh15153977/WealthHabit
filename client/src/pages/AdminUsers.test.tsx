@@ -1,7 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
-import { MemoryRouter } from 'react-router-dom';
+import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { AppLayout } from '../components/layout/AppLayout';
+import { RequireAdmin } from '../components/RequireAdmin';
 import { AdminUsers } from './AdminUsers';
 import {
   getAdminUser,
@@ -22,16 +23,22 @@ vi.mock('../services/adminUsersApi', () => ({
   updateAdminUserRole: vi.fn(),
 }));
 
+const authState = vi.hoisted(() => ({
+  user: {
+    id: 'u1',
+    firstName: 'Ada',
+    lastName: 'Admin',
+    email: 'admin@example.com',
+    role: 'ADMIN',
+    status: 'ACTIVE',
+  } as { id: string; role: string } | null,
+}));
+
 vi.mock('../context/useAuth', () => ({
   useAuth: () => ({
-    user: {
-      id: 'u1',
-      firstName: 'Ada',
-      lastName: 'Admin',
-      email: 'admin@example.com',
-      role: 'ADMIN',
-      status: 'ACTIVE',
-    },
+    user: authState.user,
+    isAuthenticated: authState.user !== null,
+    isLoading: false,
     logout: vi.fn(),
     updateUser: vi.fn(),
   }),
@@ -463,5 +470,51 @@ describe('AdminUsers page', () => {
     expect(pageText).not.toMatch(/refreshToken/i);
     expect(pageText).not.toMatch(/\$\d/);
     expect(pageText).not.toMatch(/\d+\.\d{2}/);
+  });
+});
+
+describe('RequireAdmin access for /admin/users', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  function renderRoute(user: { id: string; role: string } | null) {
+    authState.user = user;
+    render(
+      <MemoryRouter initialEntries={['/admin/users']}>
+        <Routes>
+          <Route
+            path="/admin/users"
+            element={
+              <RequireAdmin>
+                <div data-testid="admin-users-page">admin users</div>
+              </RequireAdmin>
+            }
+          />
+          <Route path="/login" element={<div data-testid="login-page">login</div>} />
+          <Route
+            path="/dashboard"
+            element={<div data-testid="user-dashboard-page">user dashboard</div>}
+          />
+        </Routes>
+      </MemoryRouter>
+    );
+  }
+
+  it('redirects anonymous visitors to login', async () => {
+    renderRoute(null);
+    expect(await screen.findByTestId('login-page')).toBeDefined();
+    expect(screen.queryByTestId('admin-users-page')).toBeNull();
+  });
+
+  it('redirects a normal USER away', async () => {
+    renderRoute({ id: 'u2', role: 'USER' });
+    expect(await screen.findByTestId('user-dashboard-page')).toBeDefined();
+    expect(screen.queryByTestId('admin-users-page')).toBeNull();
+  });
+
+  it('allows an ADMIN through', async () => {
+    renderRoute({ id: 'u1', role: 'ADMIN' });
+    expect(await screen.findByTestId('admin-users-page')).toBeDefined();
   });
 });
