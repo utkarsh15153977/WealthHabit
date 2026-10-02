@@ -154,7 +154,18 @@ export async function refresh(
   const newRefreshTokenHash = authService.hashRefreshToken(newRefreshToken);
   const newExpiresAt = authService.calculateRefreshExpiry();
 
-  await rotateSession(session.id, newRefreshTokenHash, newExpiresAt);
+  const rotation = await rotateSession(
+    session.id,
+    refreshTokenHash,
+    newRefreshTokenHash,
+    newExpiresAt
+  );
+
+  if (!rotation.rotated) {
+    await revokeTokenFamily(session.tokenFamilyId);
+    throw new AppError('Token reuse detected. Session revoked.', 401, undefined, AuthErrorCodes.TOKEN_REVOKED);
+  }
+
   authService.setRefreshCookie(res, newRefreshToken);
 
   const accessToken = authService.generateAccessToken({ id: user.id, role: user.role });

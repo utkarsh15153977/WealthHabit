@@ -331,18 +331,93 @@ describe('Prisma Auth Service', () => {
       const newRefreshTokenHash = authService.hashRefreshToken(newRefreshToken);
       const newExpiresAt = authService.calculateRefreshExpiry();
 
-      const newSession = await rotateSession(session.id, newRefreshTokenHash, newExpiresAt);
+      const rotation = await rotateSession(
+        session.id,
+        session.refreshTokenHash,
+        newRefreshTokenHash,
+        newExpiresAt
+      );
+      expect(rotation.rotated).toBe(true);
 
-      expect(newSession.id).not.toBe(session.id);
-      expect(newSession.refreshTokenHash).toBe(newRefreshTokenHash);
-      expect(newSession.userId).toBe(user.id);
-      expect(newSession.tokenFamilyId).toBe(session.tokenFamilyId);
-      expect(newSession.previousRefreshTokenHash).toBe(session.refreshTokenHash);
+      const newSession = rotation.successor;
+      expect(newSession).not.toBeNull();
+
+      expect(newSession!.id).not.toBe(session.id);
+      expect(newSession!.refreshTokenHash).toBe(newRefreshTokenHash);
+      expect(newSession!.userId).toBe(user.id);
+      expect(newSession!.tokenFamilyId).toBe(session.tokenFamilyId);
+      expect(newSession!.previousRefreshTokenHash).toBe(session.refreshTokenHash);
 
       const oldSession = await testPrisma.session.findUnique({
         where: { id: session.id },
       });
       expect(oldSession?.revokedAt).not.toBeNull();
+    });
+
+    it('should allow only one concurrent rotation of the same refresh token', async () => {
+      const { user } = await createUserWithProfile(
+        testUser.email,
+        passwordHash,
+        testUser.firstName,
+        testUser.lastName
+      );
+
+      const refreshToken = authService.generateRefreshToken();
+      const refreshTokenHash = authService.hashRefreshToken(refreshToken);
+      const expiresAt = authService.calculateRefreshExpiry();
+
+      const session = await createSession(user.id, refreshTokenHash, expiresAt);
+
+      // Both would-be requests observe the SAME still-active token before
+      // either one writes. This manufactures the exact read/write gap a
+      // TOCTOU race needs, so the test proves the database boundary instead
+      // of depending on scheduler timing, sleeps or random delays.
+      const firstObservation = await detectRefreshTokenReuse(refreshTokenHash);
+      const secondObservation = await detectRefreshTokenReuse(refreshTokenHash);
+
+      expect(firstObservation.session?.id).toBe(session.id);
+      expect(firstObservation.reuseDetected).toBe(false);
+      expect(secondObservation.session?.id).toBe(session.id);
+      expect(secondObservation.reuseDetected).toBe(false);
+
+      const newHashA = authService.hashRefreshToken(authService.generateRefreshToken());
+      const newHashB = authService.hashRefreshToken(authService.generateRefreshToken());
+
+      const [resultA, resultB] = await Promise.all([
+        rotateSession(session.id, refreshTokenHash, newHashA, authService.calculateRefreshExpiry()),
+        rotateSession(session.id, refreshTokenHash, newHashB, authService.calculateRefreshExpiry()),
+      ]);
+
+      const results = [resultA, resultB];
+
+      // Exactly one request consumed the token; the other did not.
+      expect(results.filter((result) => result.rotated).length).toBe(1);
+      expect(results.filter((result) => !result.rotated).length).toBe(1);
+      expect(results.filter((result) => result.rotated && result.successor === null).length).toBe(0);
+      expect(results.filter((result) => !result.rotated && result.successor === null).length).toBe(1);
+
+      // The security property: there must never be two successor rows whose
+      // previousRefreshTokenHash equals H0.
+      const successors = await testPrisma.session.findMany({
+        where: { previousRefreshTokenHash: refreshTokenHash },
+      });
+      expect(successors.length).toBe(1);
+
+      // Exactly one new session row was created by the rotation.
+      const createdSessions = await testPrisma.session.findMany({
+        where: { id: { not: session.id } },
+      });
+      expect(createdSessions.length).toBe(1);
+      expect(createdSessions[0].previousRefreshTokenHash).toBe(refreshTokenHash);
+      expect(createdSessions[0].tokenFamilyId).toBe(session.tokenFamilyId);
+      expect(createdSessions[0].userId).toBe(user.id);
+
+      // The original token is consumed exactly once.
+      const original = await testPrisma.session.findUnique({
+        where: { id: session.id },
+      });
+      expect(original?.revokedAt).not.toBeNull();
+      expect(original?.refreshTokenHash).toBe(refreshTokenHash);
     });
   });
 
@@ -393,7 +468,12 @@ describe('Prisma Auth Service', () => {
       const newRefreshTokenHash = authService.hashRefreshToken(newRefreshToken);
       const newExpiresAt = authService.calculateRefreshExpiry();
 
-      await rotateSession(session.id, newRefreshTokenHash, newExpiresAt);
+      await rotateSession(
+        session.id,
+        session.refreshTokenHash,
+        newRefreshTokenHash,
+        newExpiresAt
+      );
 
       const result = await detectRefreshTokenReuse(refreshTokenHash);
 
@@ -420,7 +500,12 @@ describe('Prisma Auth Service', () => {
       const newRefreshTokenHash = authService.hashRefreshToken(newRefreshToken);
       const newExpiresAt = authService.calculateRefreshExpiry();
 
-      await rotateSession(session.id, newRefreshTokenHash, newExpiresAt);
+      await rotateSession(
+        session.id,
+        session.refreshTokenHash,
+        newRefreshTokenHash,
+        newExpiresAt
+      );
 
       const result = await detectRefreshTokenReuse(newRefreshTokenHash);
 
@@ -449,7 +534,12 @@ describe('Prisma Auth Service', () => {
       const newRefreshTokenHash = authService.hashRefreshToken(newRefreshToken);
       const newExpiresAt = authService.calculateRefreshExpiry();
 
-      await rotateSession(session.id, newRefreshTokenHash, newExpiresAt);
+      await rotateSession(
+        session.id,
+        session.refreshTokenHash,
+        newRefreshTokenHash,
+        newExpiresAt
+      );
 
       const count = await revokeTokenFamily(tokenFamilyId);
 
