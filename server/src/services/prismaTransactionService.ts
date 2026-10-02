@@ -76,13 +76,6 @@ export async function listUserTransactions(
   return { transactions, total, page, limit };
 }
 
-export async function findTransactionById(id: string): Promise<TransactionWithCategory | null> {
-  return prisma.transaction.findUnique({
-    where: { id },
-    include: { category: true },
-  });
-}
-
 export async function findUserTransaction(
   id: string,
   userId: string

@@ -9,7 +9,6 @@ import {
 import {
   createTransaction,
   deleteTransaction,
-  findTransactionById,
   findUserTransaction,
   findUsableCategory,
   listUserTransactions,
@@ -204,5 +203,3 @@ export async function deleteTransactionHandler(
     data: { message: 'Transaction deleted' },
   });
 }
-
-export { findTransactionById };
