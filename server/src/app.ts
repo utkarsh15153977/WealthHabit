@@ -7,6 +7,7 @@ import { env } from './config/index.js';
 import { securityHeaderOptions } from './config/securityHeaders.js';
 import { errorHandler, notFoundHandler } from './middleware/errorHandler.js';
 import { requestLogger } from './middleware/logger.js';
+import { requestIdMiddleware } from './middleware/requestId.js';
 import { apiRateLimit } from './middleware/rateLimit.js';
 import healthRoutes from './routes/healthRoutes.js';
 import authRoutes from './routes/authRoutes.js';
@@ -43,6 +44,9 @@ app.set('trust proxy', env.TRUST_PROXY);
 
 app.disable('x-powered-by');
 
+app.use(requestIdMiddleware);
+app.use(requestLogger);
+
 app.use(helmet(securityHeaderOptions));
 
 app.use(cors({
@@ -57,7 +61,6 @@ app.use(express.urlencoded({ extended: true }));
 app.use(cookieParser());
 
 app.use(morgan(env.isDevelopment ? 'dev' : 'combined'));
-app.use(requestLogger);
 
 app.use('/api', healthRoutes);
 app.use('/api/auth', authRoutes);

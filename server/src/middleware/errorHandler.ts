@@ -3,11 +3,12 @@ import { ZodError } from 'zod';
 import { isAppError } from '../utils/errors.js';
 import { env } from '../config/index.js';
 import { AuthErrorCodes } from '../types/auth.js';
-import { sanitizeErrorMessage } from '../utils/redact.js';
+import { logger } from '../utils/logger.js';
+import { ensureRequestId } from './requestId.js';
 
 export const errorHandler = (
   err: Error,
-  _req: Request,
+  req: Request,
   res: Response,
   // eslint-disable-next-line @typescript-eslint/no-unused-vars -- Express requires 4-arg signature to detect error middleware
   _next: NextFunction
@@ -42,7 +43,19 @@ export const errorHandler = (
     });
   }
 
-  console.error('Unexpected error:', err.name, sanitizeErrorMessage(err.message));
+  // Correlates this 500 with the X-Request-Id echoed to the client. The
+  // logger redacts secrets in every string field (5G.3 protection) while
+  // keeping the full server-side stack trace for diagnosis.
+  const requestId = ensureRequestId(req, res);
+  logger.error('Unexpected error', {
+    requestId,
+    status: 500,
+    method: req.method,
+    path: req.path,
+    errorName: err.name,
+    errorMessage: err.message,
+    stack: err.stack,
+  });
 
   const message = env.isDevelopment ? err.message : 'Internal Server Error';
   return res.status(500).json({
