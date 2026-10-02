@@ -3,6 +3,7 @@ import { ZodError } from 'zod';
 import { isAppError } from '../utils/errors.js';
 import { env } from '../config/index.js';
 import { AuthErrorCodes } from '../types/auth.js';
+import { sanitizeErrorMessage } from '../utils/redact.js';
 
 export const errorHandler = (
   err: Error,
@@ -41,7 +42,7 @@ export const errorHandler = (
     });
   }
 
-  console.error('Unexpected error:', err.name, err.message);
+  console.error('Unexpected error:', err.name, sanitizeErrorMessage(err.message));
 
   const message = env.isDevelopment ? err.message : 'Internal Server Error';
   return res.status(500).json({
