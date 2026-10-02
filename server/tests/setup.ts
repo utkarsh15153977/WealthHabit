@@ -1,27 +1,9 @@
 import { beforeAll, afterAll, beforeEach, afterEach } from 'vitest';
 import { PrismaClient } from '@prisma/client';
+import { assertSafeTestDatabaseUrl } from '../scripts/lib/dbSafety.js';
 
-function resolveTestDatabaseName(): string {
-  const databaseUrl = process.env.DATABASE_URL;
-
-  if (!databaseUrl) {
-    throw new Error('DATABASE_URL is not set for tests.');
-  }
-
-  const databaseName = new URL(databaseUrl).pathname.replace(/^\//, '');
-
-  if (!databaseName.endsWith('_test')) {
-    throw new Error(
-      `Refusing to run tests against database "${databaseName}". ` +
-        'Tests require a dedicated database whose name ends with "_test". ' +
-        'Run "npm run db:test:setup" and check server/vitest.config.ts.'
-    );
-  }
-
-  return databaseName;
-}
-
-const testDatabaseName = resolveTestDatabaseName();
+const testDatabaseUrl = assertSafeTestDatabaseUrl(process.env.DATABASE_URL);
+const testDatabaseName = new URL(testDatabaseUrl).pathname.replace(/^\//, '');
 
 const prisma = new PrismaClient();
 

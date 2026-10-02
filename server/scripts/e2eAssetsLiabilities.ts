@@ -1,6 +1,9 @@
 import { config } from 'dotenv';
+import { assertSafeE2EDatabaseUrl } from './lib/dbSafety.js';
 
 config();
+
+assertSafeE2EDatabaseUrl(process.env.DATABASE_URL);
 
 const BASE_URL = process.env.E2E_BASE_URL ?? 'http://localhost:5000/api';
 const PASSWORD = 'E2ePassword123!';
