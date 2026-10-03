@@ -53,6 +53,36 @@ const allowedStatusTransitions: Record<AccountStatus, AccountStatus[]> = {
   ],
 };
 
+const ADMIN_USER_MUTATION_LOCK_KEY = 'wealthhabit:admin_user_mutations';
+
+const ADMIN_USER_MUTATION_TIMEOUT_MS = 15_000;
+
+export async function lockAdminUserMutations(
+  tx: Prisma.TransactionClient
+): Promise<void> {
+  await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtext(${ADMIN_USER_MUTATION_LOCK_KEY})::bigint) IS NOT NULL AS "acquired"`;
+}
+
+async function lockAdminUserRow(
+  tx: Prisma.TransactionClient,
+  userId: string
+): Promise<void> {
+  await tx.$queryRaw`SELECT "id" FROM "users" WHERE "id" = ${userId} FOR UPDATE`;
+}
+
+async function countRemainingActiveAdmins(
+  tx: Prisma.TransactionClient,
+  excludeUserId: string
+): Promise<number> {
+  return tx.user.count({
+    where: {
+      role: Role.ADMIN,
+      status: AccountStatus.ACTIVE,
+      id: { not: excludeUserId },
+    },
+  });
+}
+
 function toAdminUserSummary(user: SelectedUser): AdminUserSummary {
   return {
     id: user.id,
@@ -151,7 +181,7 @@ export async function updateAdminUserStatus(
 ): Promise<AdminUserDetail> {
   const target = await prisma.user.findUnique({
     where: { id: userId },
-    select: { id: true, status: true },
+    select: { id: true },
   });
 
   if (!target) {
@@ -167,50 +197,85 @@ export async function updateAdminUserStatus(
     );
   }
 
-  if (!allowedStatusTransitions[target.status].includes(nextStatus)) {
-    throw new AppError(
-      `Account status cannot change from ${target.status} to ${nextStatus}`,
-      409,
-      undefined,
-      ApiErrorCodes.INVALID_STATUS_TRANSITION
-    );
-  }
+  await prisma.$transaction(
+    async (tx) => {
+      await lockAdminUserMutations(tx);
+      await lockAdminUserRow(tx, userId);
 
-  if (target.status === nextStatus) {
-    return getAdminUserDetail(userId);
-  }
+      const fresh = await tx.user.findUnique({
+        where: { id: userId },
+        select: { status: true, role: true },
+      });
 
-  const now = new Date();
+      if (!fresh) {
+        throw userNotFound();
+      }
 
-  await prisma.$transaction(async (tx) => {
-    await tx.user.update({
-      where: { id: userId },
-      data: { status: nextStatus },
-    });
+      if (!allowedStatusTransitions[fresh.status].includes(nextStatus)) {
+        throw new AppError(
+          `Account status cannot change from ${fresh.status} to ${nextStatus}`,
+          409,
+          undefined,
+          ApiErrorCodes.INVALID_STATUS_TRANSITION
+        );
+      }
 
-    // Status is not data deletion: only authentication sessions are revoked,
-    // financial and application records are never touched.
-    const revoked = await tx.session.updateMany({
-      where: { userId, revokedAt: null },
-      data: { revokedAt: now },
-    });
+      if (fresh.status === nextStatus) {
+        return;
+      }
 
-    await recordAuditEvent(
-      {
-        actorUserId,
-        action: AuditActions.ADMIN_USER_STATUS_CHANGED,
-        entityType: 'User',
-        entityId: userId,
-        metadata: {
-          targetUserId: userId,
-          from: target.status,
-          to: nextStatus,
-          revokedSessions: revoked.count,
+      if (
+        fresh.role === Role.ADMIN &&
+        fresh.status === AccountStatus.ACTIVE &&
+        nextStatus !== AccountStatus.ACTIVE
+      ) {
+        const remainingActiveAdmins = await countRemainingActiveAdmins(
+          tx,
+          userId
+        );
+
+        if (remainingActiveAdmins < 1) {
+          throw new AppError(
+            'The last active administrator cannot be suspended or deactivated',
+            409,
+            undefined,
+            ApiErrorCodes.LAST_ADMIN_REQUIRED
+          );
+        }
+      }
+
+      await tx.user.update({
+        where: { id: userId },
+        data: { status: nextStatus },
+      });
+
+      const now = new Date();
+
+      // Status is not data deletion: only authentication sessions are revoked,
+      // financial and application records are never touched.
+      const revoked = await tx.session.updateMany({
+        where: { userId, revokedAt: null },
+        data: { revokedAt: now },
+      });
+
+      await recordAuditEvent(
+        {
+          actorUserId,
+          action: AuditActions.ADMIN_USER_STATUS_CHANGED,
+          entityType: 'User',
+          entityId: userId,
+          metadata: {
+            targetUserId: userId,
+            from: fresh.status,
+            to: nextStatus,
+            revokedSessions: revoked.count,
+          },
         },
-      },
-      tx
-    );
-  });
+        tx
+      );
+    },
+    { timeout: ADMIN_USER_MUTATION_TIMEOUT_MS }
+  );
 
   return getAdminUserDetail(userId);
 }
@@ -233,51 +298,68 @@ export async function updateAdminUserRole(
     return getAdminUserDetail(userId);
   }
 
-  if (target.role === Role.ADMIN && nextRole === Role.USER) {
-    // Server-side count of the administrators that would remain ACTIVE after
-    // this demotion. The target is excluded so demoting somebody else's
-    // account is never blocked by the target's own admin row.
-    const remainingActiveAdmins = await prisma.user.count({
-      where: {
-        role: Role.ADMIN,
-        status: AccountStatus.ACTIVE,
-        id: { not: userId },
-      },
-    });
+  await prisma.$transaction(
+    async (tx) => {
+      await lockAdminUserMutations(tx);
+      await lockAdminUserRow(tx, userId);
 
-    if (remainingActiveAdmins < 1) {
-      throw new AppError(
-        'The last administrator cannot be demoted',
-        409,
-        undefined,
-        ApiErrorCodes.LAST_ADMIN_REQUIRED
-      );
-    }
-  }
+      const fresh = await tx.user.findUnique({
+        where: { id: userId },
+        select: { role: true },
+      });
 
-  await prisma.$transaction(async (tx) => {
-    await tx.user.update({
-      where: { id: userId },
-      data: { role: nextRole },
-    });
+      if (!fresh) {
+        throw userNotFound();
+      }
 
-    // Role changes need no session revocation: `authenticate` re-reads the
-    // role from the database on every request.
-    await recordAuditEvent(
-      {
-        actorUserId,
-        action: AuditActions.ADMIN_USER_ROLE_CHANGED,
-        entityType: 'User',
-        entityId: userId,
-        metadata: {
-          targetUserId: userId,
-          from: target.role,
-          to: nextRole,
+      if (fresh.role === nextRole) {
+        return;
+      }
+
+      if (fresh.role === Role.ADMIN && nextRole === Role.USER) {
+        // Server-side count of the administrators that would remain ACTIVE
+        // after this demotion, evaluated while every other admin mutation is
+        // blocked. The target is excluded so demoting somebody else's account
+        // is never blocked by the target's own admin row.
+        const remainingActiveAdmins = await countRemainingActiveAdmins(
+          tx,
+          userId
+        );
+
+        if (remainingActiveAdmins < 1) {
+          throw new AppError(
+            'The last administrator cannot be demoted',
+            409,
+            undefined,
+            ApiErrorCodes.LAST_ADMIN_REQUIRED
+          );
+        }
+      }
+
+      await tx.user.update({
+        where: { id: userId },
+        data: { role: nextRole },
+      });
+
+      // Role changes need no session revocation: `authenticate` re-reads the
+      // role from the database on every request.
+      await recordAuditEvent(
+        {
+          actorUserId,
+          action: AuditActions.ADMIN_USER_ROLE_CHANGED,
+          entityType: 'User',
+          entityId: userId,
+          metadata: {
+            targetUserId: userId,
+            from: fresh.role,
+            to: nextRole,
+          },
         },
-      },
-      tx
-    );
-  });
+        tx
+      );
+    },
+    { timeout: ADMIN_USER_MUTATION_TIMEOUT_MS }
+  );
 
   return getAdminUserDetail(userId);
 }
