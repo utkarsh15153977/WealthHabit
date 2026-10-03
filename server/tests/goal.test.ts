@@ -1000,6 +1000,201 @@ describe('Savings Goals API', () => {
     });
   });
 
+  describe('goal status race (M-5)', () => {
+    function sleep(ms: number): Promise<void> {
+      return new Promise((resolve) => setTimeout(resolve, ms));
+    }
+
+    function signal(): { settled: Promise<void>; resolve: () => void } {
+      let resolve!: () => void;
+      const settled = new Promise<void>((r) => {
+        resolve = r;
+      });
+      return { settled, resolve };
+    }
+
+    /**
+     * Takes the goal row lock from a separate test transaction and leaves it
+     * held until the returned release function is called, so every request
+     * started in between queues on the exact same row lock the production
+     * code uses.
+     */
+    async function holdGoalLock(goalId: string): Promise<() => Promise<void>> {
+      const held = signal();
+      const released = signal();
+      const txDone = testPrisma.$transaction(
+        async (tx) => {
+          try {
+            await tx.$queryRaw`SELECT "id" FROM "savings_goals" WHERE "id" = ${goalId} FOR UPDATE`;
+          } finally {
+            held.resolve();
+          }
+          await released.settled;
+        },
+        { timeout: 8000 }
+      );
+      txDone.catch(() => undefined);
+      await held.settled;
+
+      return async () => {
+        released.resolve();
+        await txDone;
+      };
+    }
+
+    async function savedAmountOf(goalId: string): Promise<number> {
+      const aggregate = await testPrisma.goalContribution.aggregate({
+        where: { goalId },
+        _sum: { amount: true },
+      });
+      return Number(aggregate._sum.amount ?? 0);
+    }
+
+    it('lets a racing contribution finish before a status-less patch derives status', async () => {
+      const goalId = await createGoal({ targetAmount: '100.00' });
+      const release = await holdGoalLock(goalId);
+
+      let contributionStatus: number | undefined;
+      const startContribution = () =>
+        post(`/api/goals/${goalId}/contributions`)
+          .send({ amount: '100.00' })
+          .then((res) => {
+            contributionStatus = res.status;
+            return res;
+          });
+
+      let patchStatus: number | undefined;
+      const startPatch = () =>
+        patch(`/api/goals/${goalId}`)
+          .send({ name: 'Renamed fund' })
+          .then((res) => {
+            patchStatus = res.status;
+            return res;
+          });
+
+      const contributing = startContribution();
+      let patching: ReturnType<typeof startPatch> | undefined;
+
+      try {
+        await sleep(400);
+        expect(contributionStatus).toBeUndefined();
+
+        // Queued strictly behind the contribution so the released lock hands
+        // the row to the contribution first: the patch is forced to decide
+        // status after the goal already became COMPLETED.
+        patching = startPatch();
+        await sleep(400);
+        expect(patchStatus).toBeUndefined();
+      } finally {
+        await release();
+        await Promise.all([contributing, patching]).catch(() => undefined);
+      }
+
+      const contributionRes = await contributing;
+      const patchRes = patching ? await patching : undefined;
+
+      expect(contributionRes.status).toBe(201);
+      expect(patchRes?.status).toBe(200);
+      expect(patchRes?.body.data.goal.status).toBe('COMPLETED');
+      expect(patchRes?.body.data.goal.currentAmount).toBe(100);
+
+      const row = await testPrisma.savingsGoal.findUnique({
+        where: { id: goalId },
+      });
+      expect(row?.status).toBe('COMPLETED');
+      expect(await savedAmountOf(goalId)).toBeGreaterThanOrEqual(100);
+    }, 15000);
+
+    it('never lets a status-less patch overwrite an explicit PAUSED intent', async () => {
+      const goalId = await createGoal({ targetAmount: '100.00' });
+      const release = await holdGoalLock(goalId);
+
+      let pauseStatus: number | undefined;
+      const startPause = () =>
+        patch(`/api/goals/${goalId}`)
+          .send({ status: 'PAUSED' })
+          .then((res) => {
+            pauseStatus = res.status;
+            return res;
+          });
+
+      let renameStatus: number | undefined;
+      const startRename = () =>
+        patch(`/api/goals/${goalId}`)
+          .send({ name: 'Renamed while paused' })
+          .then((res) => {
+            renameStatus = res.status;
+            return res;
+          });
+
+      let pausing: ReturnType<typeof startPause> | undefined;
+      let renaming: ReturnType<typeof startRename> | undefined;
+
+      try {
+        // The pause lands first; the status-less rename still reads the
+        // pre-pause snapshot (ACTIVE) because the pause cannot commit yet.
+        pausing = startPause();
+        await sleep(400);
+        expect(pauseStatus).toBeUndefined();
+
+        renaming = startRename();
+        await sleep(400);
+        expect(renameStatus).toBeUndefined();
+      } finally {
+        await release();
+        await Promise.all([pausing, renaming]).catch(() => undefined);
+      }
+
+      const pauseRes = pausing ? await pausing : undefined;
+      const renameRes = renaming ? await renaming : undefined;
+
+      expect(pauseRes?.status).toBe(200);
+      expect(renameRes?.status).toBe(200);
+      expect(pauseRes?.body.data.goal.status).toBe('PAUSED');
+      expect(renameRes?.body.data.goal.status).toBe('PAUSED');
+
+      const row = await testPrisma.savingsGoal.findUnique({
+        where: { id: goalId },
+      });
+      expect(row?.status).toBe('PAUSED');
+      expect(row?.name).toBe('Renamed while paused');
+    }, 15000);
+
+    it('keeps a patch pending for as long as the goal row lock is held', async () => {
+      const goalId = await createGoal();
+      const release = await holdGoalLock(goalId);
+
+      let status: number | undefined;
+      const pending = patch(`/api/goals/${goalId}`)
+        .send({ name: 'Blocked rename' })
+        .then((res) => {
+          status = res.status;
+          return res;
+        });
+
+      try {
+        await sleep(500);
+        expect(status).toBeUndefined();
+        const locked = await testPrisma.savingsGoal.findUnique({
+          where: { id: goalId },
+        });
+        expect(locked?.name).toBe('Emergency fund');
+      } finally {
+        await release();
+        await pending.catch(() => undefined);
+      }
+
+      const res = await pending;
+      expect(res.status).toBe(200);
+      expect(res.body.data.goal.name).toBe('Blocked rename');
+
+      const row = await testPrisma.savingsGoal.findUnique({
+        where: { id: goalId },
+      });
+      expect(row?.name).toBe('Blocked rename');
+    }, 15000);
+  });
+
   describe('no financial side effects', () => {
     it('creates no transactions, notifications or budgets during a full goal lifecycle', async () => {
       const goalId = await createGoal({ targetAmount: '300.00' });
