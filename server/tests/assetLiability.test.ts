@@ -1,10 +1,10 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import request from 'supertest';
 import express from 'express';
 import cookieParser from 'cookie-parser';
 import { testPrisma, createTestUser } from './setup.js';
 import { hashPassword, authService } from '../src/services/authService.js';
-import { Role, AccountStatus, CategoryType, TransactionType } from '@prisma/client';
+import { Role, AccountStatus, CategoryType, TransactionType, Prisma } from '@prisma/client';
 import { errorHandler } from '../src/middleware/errorHandler.js';
 import {
   assetRouter,
@@ -12,6 +12,8 @@ import {
   summaryRouter,
 } from '../src/routes/assetLiabilityRoutes.js';
 import goalRoutes from '../src/routes/goalRoutes.js';
+import { prisma } from '../src/config/prisma.js';
+import { getAssetsLiabilitiesAggregate } from '../src/services/prismaAssetLiabilityService.js';
 
 describe('Assets & Liabilities API', () => {
   let app: express.Express;
@@ -992,6 +994,32 @@ describe('Assets & Liabilities API', () => {
         res.body.data.totalAssets - res.body.data.totalLiabilities
       );
       expect(res.body.data).not.toHaveProperty('netWorthAmount');
+    });
+  });
+
+  describe('transaction isolation', () => {
+    it('reads both aggregates in a single RepeatableRead transaction', async () => {
+      await createAsset({ currentValue: '150000.00' });
+      await createAsset({ currentValue: '5000.00' });
+      await createLiability({ outstandingAmount: '35000.00' });
+
+      const transactionSpy = vi.spyOn(prisma, '$transaction');
+
+      try {
+        const aggregate = await getAssetsLiabilitiesAggregate(userA.id);
+
+        expect(transactionSpy).toHaveBeenCalledTimes(1);
+        expect(transactionSpy).toHaveBeenCalledWith(expect.any(Function), {
+          isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead,
+        });
+
+        expect(aggregate.totalAssets.toNumber()).toBe(155000);
+        expect(aggregate.assetCount).toBe(2);
+        expect(aggregate.totalLiabilities.toNumber()).toBe(35000);
+        expect(aggregate.liabilityCount).toBe(1);
+      } finally {
+        transactionSpy.mockRestore();
+      }
     });
   });
 

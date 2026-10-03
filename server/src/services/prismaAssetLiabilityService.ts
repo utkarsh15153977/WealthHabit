@@ -188,22 +188,32 @@ export async function deleteLiability(id: string): Promise<void> {
  * Totals stay in Prisma.Decimal until serialization — no float arithmetic.
  * The two sums are deliberately kept separate: Net Worth (Assets −
  * Liabilities) is derived from them in prismaWealthSnapshotService.
+ *
+ * Both aggregates run inside one RepeatableRead transaction so they observe a
+ * single database snapshot: under READ COMMITTED each statement takes its own
+ * snapshot and a concurrent asset/liability write could make the totals and
+ * counts disagree with each other.
  */
 export async function getAssetsLiabilitiesAggregate(
   userId: string
 ): Promise<AssetsLiabilitiesAggregate> {
-  const [assetAggregate, liabilityAggregate] = await Promise.all([
-    prisma.asset.aggregate({
-      where: { userId },
-      _sum: { currentValue: true },
-      _count: { _all: true },
-    }),
-    prisma.liability.aggregate({
-      where: { userId },
-      _sum: { outstandingAmount: true },
-      _count: { _all: true },
-    }),
-  ]);
+  const [assetAggregate, liabilityAggregate] = await prisma.$transaction(
+    async (tx) => {
+      const assets = await tx.asset.aggregate({
+        where: { userId },
+        _sum: { currentValue: true },
+        _count: { _all: true },
+      });
+      const liabilities = await tx.liability.aggregate({
+        where: { userId },
+        _sum: { outstandingAmount: true },
+        _count: { _all: true },
+      });
+
+      return [assets, liabilities] as const;
+    },
+    { isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead }
+  );
 
   return {
     totalAssets: assetAggregate._sum.currentValue ?? ZERO,

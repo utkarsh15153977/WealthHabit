@@ -1,10 +1,10 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import request from 'supertest';
 import express from 'express';
 import cookieParser from 'cookie-parser';
 import { testPrisma, createTestUser } from './setup.js';
 import { hashPassword, authService } from '../src/services/authService.js';
-import { Role, AccountStatus, CategoryType, TransactionType } from '@prisma/client';
+import { Role, AccountStatus, CategoryType, TransactionType, Prisma } from '@prisma/client';
 import { errorHandler } from '../src/middleware/errorHandler.js';
 import {
   assetRouter,
@@ -14,6 +14,8 @@ import {
 import { wealthSnapshotRouter } from '../src/routes/wealthSnapshotRoutes.js';
 import goalRoutes from '../src/routes/goalRoutes.js';
 import { addUtcDays, startOfUtcDay } from '../src/utils/date.js';
+import { prisma } from '../src/config/prisma.js';
+import { createTodayWealthSnapshot } from '../src/services/prismaWealthSnapshotService.js';
 
 describe('Net Worth & Wealth Snapshots API', () => {
   let app: express.Express;
@@ -448,6 +450,32 @@ describe('Net Worth & Wealth Snapshots API', () => {
       expect(goals).toBe(0);
       expect(notifications).toBe(0);
       expect(budgets).toBe(0);
+    });
+  });
+
+  describe('transaction isolation', () => {
+    it('captures inside a single RepeatableRead transaction', async () => {
+      await createAsset('120000.00');
+      await createLiability('45000.00');
+
+      const transactionSpy = vi.spyOn(prisma, '$transaction');
+
+      try {
+        const result = await createTodayWealthSnapshot(userA.id);
+
+        expect(transactionSpy).toHaveBeenCalledTimes(1);
+        expect(transactionSpy).toHaveBeenCalledWith(expect.any(Function), {
+          isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead,
+        });
+
+        expect(result.created).toBe(true);
+        expect(result.snapshot.totalAssets.toNumber()).toBe(120000);
+        expect(result.snapshot.totalLiabilities.toNumber()).toBe(45000);
+        expect(result.snapshot.netWorth.toNumber()).toBe(75000);
+        expect(result.snapshot.userId).toBe(userA.id);
+      } finally {
+        transactionSpy.mockRestore();
+      }
     });
   });
 
