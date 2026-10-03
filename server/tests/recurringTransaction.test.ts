@@ -468,6 +468,109 @@ describe('Recurring Transactions API', () => {
     expect(await countTransactions(id)).toBe(6);
   });
 
+  it('keeps concurrent generations for one rule duplicate-free with a single cursor advance', async () => {
+    const id = await createRule({ startDate: toIsoDay(daysAgo(5)), frequency: 'DAILY' });
+
+    const staleRule = await testPrisma.recurringTransaction.findUnique({ where: { id } });
+    expect(staleRule).not.toBeNull();
+
+    const horizon = today;
+    const results = await Promise.all([
+      generateOccurrencesForRule(staleRule!, horizon),
+      generateOccurrencesForRule(staleRule!, horizon),
+      generateOccurrencesForRule(staleRule!, horizon),
+    ]);
+
+    const rows = await testPrisma.transaction.findMany({
+      where: { recurringTransactionId: id },
+      orderBy: { transactionDate: 'asc' },
+    });
+
+    expect(rows).toHaveLength(6);
+    const days = rows.map((row) => rowDay(row.transactionDate));
+    expect(new Set(days).size).toBe(6);
+    expect(days[0]).toBe(rowDay(daysAgo(5)));
+    expect(days[days.length - 1]).toBe(rowDay(today));
+    expect(rows.every((row) => row.userId === userA.id)).toBe(true);
+
+    // occurrencesCreated counts rows actually inserted across all runs
+    const totalCreated = results.reduce((sum, result) => sum + result.occurrencesCreated, 0);
+    expect(totalCreated).toBe(6);
+
+    // exactly one logical cursor advancement: one step past the last due day
+    const expectedCursor = rowDay(new Date(today.getTime() + MS_PER_DAY));
+    const stored = await testPrisma.recurringTransaction.findUnique({ where: { id } });
+    expect(rowDay(stored!.nextOccurrenceDate)).toBe(expectedCursor);
+    for (const result of results) {
+      expect(rowDay(result.nextOccurrenceDate)).toBe(expectedCursor);
+    }
+  });
+
+  it('does not duplicate an existing middle occurrence and still advances the cursor', async () => {
+    const id = await createRule({ startDate: toIsoDay(daysAgo(3)), frequency: 'DAILY' });
+
+    await testPrisma.transaction.create({
+      data: {
+        userId: userA.id,
+        categoryId: foodCatA,
+        type: TransactionType.EXPENSE,
+        amount: '100.00',
+        description: 'Groceries',
+        transactionDate: daysAgo(1),
+        recurringTransactionId: id,
+      },
+    });
+
+    const res = await generate(id);
+    expect(res.status).toBe(200);
+    expect(res.body.data.occurrencesCreated).toBe(3);
+
+    const rows = await testPrisma.transaction.findMany({
+      where: { recurringTransactionId: id },
+      orderBy: { transactionDate: 'asc' },
+    });
+    expect(rows.map((row) => rowDay(row.transactionDate))).toEqual([
+      rowDay(daysAgo(3)),
+      rowDay(daysAgo(2)),
+      rowDay(daysAgo(1)),
+      rowDay(today),
+    ]);
+
+    const stored = await testPrisma.recurringTransaction.findUnique({ where: { id } });
+    expect(rowDay(stored!.nextOccurrenceDate)).toBe(rowDay(new Date(today.getTime() + MS_PER_DAY)));
+  });
+
+  it('rolls back generated rows and the cursor when generation fails before the cursor update', async () => {
+    const id = await createRule({ startDate: toIsoDay(daysAgo(3)), frequency: 'DAILY' });
+
+    const rule = await testPrisma.recurringTransaction.findUnique({ where: { id } });
+    expect(rule).not.toBeNull();
+
+    let rowsSeenInsideTransaction = -1;
+
+    await expect(
+      generateOccurrencesForRule(rule!, today, {
+        beforeCursorUpdate: async (_rule, tx) => {
+          rowsSeenInsideTransaction = await tx.transaction.count({
+            where: { recurringTransactionId: id },
+          });
+          throw new Error('injected failure after occurrence writes');
+        },
+      })
+    ).rejects.toThrow('injected failure after occurrence writes');
+
+    expect(rowsSeenInsideTransaction).toBe(4);
+    expect(await countTransactions(id)).toBe(0);
+
+    const stored = await testPrisma.recurringTransaction.findUnique({ where: { id } });
+    expect(rowDay(stored!.nextOccurrenceDate)).toBe(rowDay(daysAgo(3)));
+
+    const retry = await generate(id);
+    expect(retry.status).toBe(200);
+    expect(retry.body.data.occurrencesCreated).toBe(4);
+    expect(await countTransactions(id)).toBe(4);
+  });
+
   it('does not generate occurrences for an inactive recurrence', async () => {
     const id = await createRule({
       startDate: toIsoDay(daysAgo(3)),
