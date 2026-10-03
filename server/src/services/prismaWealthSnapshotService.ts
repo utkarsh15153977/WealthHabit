@@ -52,29 +52,36 @@ export async function createTodayWealthSnapshot(
   const snapshotDate = startOfUtcDay(new Date());
 
   try {
-    const snapshot = await prisma.$transaction(async (tx) => {
-      const assetAggregate = await tx.asset.aggregate({
-        where: { userId },
-        _sum: { currentValue: true },
-      });
-      const liabilityAggregate = await tx.liability.aggregate({
-        where: { userId },
-        _sum: { outstandingAmount: true },
-      });
+    // RepeatableRead: both aggregates and the insert share one database
+    // snapshot. Under the default READ COMMITTED every statement gets its own
+    // snapshot, so a persisted capture could otherwise mix assets and
+    // liabilities read from two different database states.
+    const snapshot = await prisma.$transaction(
+      async (tx) => {
+        const assetAggregate = await tx.asset.aggregate({
+          where: { userId },
+          _sum: { currentValue: true },
+        });
+        const liabilityAggregate = await tx.liability.aggregate({
+          where: { userId },
+          _sum: { outstandingAmount: true },
+        });
 
-      const totalAssets = assetAggregate._sum.currentValue ?? ZERO;
-      const totalLiabilities = liabilityAggregate._sum.outstandingAmount ?? ZERO;
+        const totalAssets = assetAggregate._sum.currentValue ?? ZERO;
+        const totalLiabilities = liabilityAggregate._sum.outstandingAmount ?? ZERO;
 
-      return tx.wealthSnapshot.create({
-        data: {
-          userId,
-          snapshotDate,
-          totalAssets,
-          totalLiabilities,
-          netWorth: totalAssets.minus(totalLiabilities),
-        },
-      });
-    });
+        return tx.wealthSnapshot.create({
+          data: {
+            userId,
+            snapshotDate,
+            totalAssets,
+            totalLiabilities,
+            netWorth: totalAssets.minus(totalLiabilities),
+          },
+        });
+      },
+      { isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead }
+    );
 
     return { snapshot, created: true };
   } catch (error) {
