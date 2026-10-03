@@ -123,6 +123,60 @@ describe('Auth Controller - Refresh Token Reuse Detection', () => {
     expect(fifthRefresh.body.error.code).toBe('TOKEN_REVOKED');
   });
 
+  it('should allow only one of two concurrent refreshes with the same cookie to succeed', async () => {
+    const { refreshCookie } = await loginAndGetTokens();
+
+    // Both requests present the SAME refresh cookie at the same time.
+    // No request ordering is assumed: exactly one must win.
+    const [first, second] = await Promise.all([
+      request(app).post('/api/auth/refresh').set('Cookie', refreshCookie),
+      request(app).post('/api/auth/refresh').set('Cookie', refreshCookie),
+    ]);
+
+    const responses = [first, second];
+    const successes = responses.filter((res) => res.status === 200);
+    const rejections = responses.filter((res) => res.status === 401);
+
+    // Exactly one successful consumption of the old refresh token.
+    expect(successes.length).toBe(1);
+    expect(rejections.length).toBe(1);
+
+    // The loser follows the existing reuse-detection semantics.
+    const rejected = rejections[0];
+    expect(rejected.body.success).toBe(false);
+    expect(rejected.body.error.code).toBe('TOKEN_REVOKED');
+    expect(rejected.body.error.message).toContain('Token reuse detected');
+
+    // The winner got a rotated cookie.
+    const winnerCookie = successes[0].headers['set-cookie'];
+    expect(winnerCookie).toBeDefined();
+
+    // Family-revocation post-condition: because a reuse was observed, the
+    // whole token family is revoked — the winner's freshly minted token is
+    // dead too, so neither the old token nor its successor can be replayed.
+    const afterFamilyRevoke = await request(app)
+      .post('/api/auth/refresh')
+      .set('Cookie', winnerCookie);
+    expect(afterFamilyRevoke.status).toBe(401);
+    expect(afterFamilyRevoke.body.error.code).toBe('TOKEN_REVOKED');
+
+    const replayOldToken = await request(app)
+      .post('/api/auth/refresh')
+      .set('Cookie', refreshCookie);
+    expect(replayOldToken.status).toBe(401);
+    expect(replayOldToken.body.error.code).toBe('TOKEN_REVOKED');
+    expect(replayOldToken.body.error.message).toContain('Token reuse detected');
+
+    // No second successor may exist: exactly one rotation happened, so the
+    // database holds the original session plus exactly one successor.
+    const familySessions = await testPrisma.session.findMany({});
+    const successors = familySessions.filter(
+      (row) => row.previousRefreshTokenHash !== null
+    );
+    expect(successors.length).toBe(1);
+    expect(familySessions.length).toBe(2);
+  });
+
   it('should not log raw cookies or tokens', async () => {
     const consoleLogSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
     const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});

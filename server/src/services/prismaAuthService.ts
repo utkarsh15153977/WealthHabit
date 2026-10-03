@@ -142,11 +142,27 @@ export async function getAuthenticatedUser(userId: string): Promise<Authenticate
   return authService.toAuthenticatedUser(user);
 }
 
+/**
+ * Atomically consumes the current refresh token and creates its successor.
+ *
+ * The old token is consumed by a conditional `updateMany` (compare-and-swap)
+ * whose predicate is `id AND refreshTokenHash AND revokedAt IS NULL`, so the
+ * database — not application code — decides which concurrent request wins.
+ * Exactly one caller can observe `count === 1`; every other caller racing on
+ * the same token observes `count === 0` and gets `{ rotated: false }` without
+ * a successor row ever being written. Under READ COMMITTED the loser's
+ * `UPDATE` re-evaluates its predicate against the winner's committed tuple,
+ * so the unconditional-update TOCTOU cannot occur.
+ *
+ * The expected hash is supplied by the caller (the hash of the token actually
+ * presented in the request), binding consumption to the exact token observed.
+ */
 export async function rotateSession(
   oldSessionId: string,
+  expectedRefreshTokenHash: string,
   newRefreshTokenHash: string,
   newExpiresAt: Date
-): Promise<Session> {
+): Promise<{ rotated: boolean; successor: Session | null }> {
   return prisma.$transaction(async (tx) => {
     const oldSession = await tx.session.findUnique({
       where: { id: oldSessionId },
@@ -156,12 +172,20 @@ export async function rotateSession(
       throw new Error('Session not found');
     }
 
-    await tx.session.update({
-      where: { id: oldSessionId },
+    const consumed = await tx.session.updateMany({
+      where: {
+        id: oldSessionId,
+        refreshTokenHash: expectedRefreshTokenHash,
+        revokedAt: null,
+      },
       data: { revokedAt: new Date() },
     });
 
-    return tx.session.create({
+    if (consumed.count !== 1) {
+      return { rotated: false, successor: null };
+    }
+
+    const successor = await tx.session.create({
       data: {
         userId: oldSession.userId,
         refreshTokenHash: newRefreshTokenHash,
@@ -170,6 +194,8 @@ export async function rotateSession(
         expiresAt: newExpiresAt,
       },
     });
+
+    return { rotated: true, successor };
   });
 }
 
