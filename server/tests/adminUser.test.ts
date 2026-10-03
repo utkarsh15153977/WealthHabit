@@ -2,9 +2,10 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import request from 'supertest';
 import express from 'express';
 import cookieParser from 'cookie-parser';
-import { AccountStatus, Role } from '@prisma/client';
+import { AccountStatus, Prisma, Role } from '@prisma/client';
 import { testPrisma, createTestUser } from './setup.js';
 import { hashPassword, authService } from '../src/services/authService.js';
+import { lockAdminUserMutations } from '../src/services/adminUserService.js';
 import { env } from '../src/config/index.js';
 import { errorHandler } from '../src/middleware/errorHandler.js';
 import adminUserRoutes from '../src/routes/adminUserRoutes.js';
@@ -833,6 +834,237 @@ describe('Admin user management API', () => {
       expect(await testPrisma.auditLog.count()).toBe(0);
       expect(await testPrisma.user.count()).toBe(3);
       expect(await testPrisma.session.count()).toBe(0);
+    });
+  });
+
+  describe('concurrent admin mutations', () => {
+    let secondAdmin: TestUser;
+    let secondToken: string;
+
+    beforeEach(async () => {
+      secondAdmin = await createUser(Role.ADMIN, AccountStatus.ACTIVE, {
+        firstName: 'Second',
+        lastName: 'Admin',
+      });
+      secondToken = authService.generateAccessToken({
+        id: secondAdmin.id,
+        role: Role.ADMIN,
+      });
+    });
+
+    function sleep(ms: number): Promise<void> {
+      return new Promise((resolve) => setTimeout(resolve, ms));
+    }
+
+    function signal(): { settled: Promise<void>; resolve: () => void } {
+      let resolve!: () => void;
+      const settled = new Promise<void>((r) => {
+        resolve = r;
+      });
+      return { settled, resolve };
+    }
+
+    async function holdLocks(
+      acquire: (tx: Prisma.TransactionClient) => Promise<void>
+    ): Promise<() => Promise<void>> {
+      const held = signal();
+      const released = signal();
+      const txDone = testPrisma.$transaction(
+        async (tx) => {
+          try {
+            await acquire(tx);
+          } finally {
+            held.resolve();
+          }
+          await released.settled;
+        },
+        { timeout: 8000 }
+      );
+      txDone.catch(() => undefined);
+      await held.settled;
+
+      return async () => {
+        released.resolve();
+        await txDone;
+      };
+    }
+
+    function holdUserRows(...ids: string[]): Promise<() => Promise<void>> {
+      return holdLocks(async (tx) => {
+        for (const id of ids) {
+          await tx.$queryRaw`SELECT "id" FROM "users" WHERE "id" = ${id} FOR UPDATE`;
+        }
+      });
+    }
+
+    function holdSessionRows(userId: string): Promise<() => Promise<void>> {
+      return holdLocks((tx) =>
+        tx.$queryRaw`SELECT "id" FROM "sessions" WHERE "userId" = ${userId} FOR UPDATE`
+      );
+    }
+
+    function activeAdminCount(): Promise<number> {
+      return testPrisma.user.count({
+        where: { role: Role.ADMIN, status: AccountStatus.ACTIVE },
+      });
+    }
+
+    it('serializes admin mutations behind the shared advisory lock', async () => {
+      const release = await holdLocks((tx) => lockAdminUserMutations(tx));
+      let status: number | undefined;
+
+      const pending = patch(`/api/admin/users/${userA.id}/status`, tokenAdmin)
+        .send({ status: 'SUSPENDED' })
+        .then((res) => {
+          status = res.status;
+          return res;
+        });
+
+      try {
+        await sleep(400);
+        expect(status).toBeUndefined();
+      } finally {
+        await release();
+      }
+
+      const res = await pending;
+      expect(res.status).toBe(200);
+      const user = await testPrisma.user.findUnique({ where: { id: userA.id } });
+      expect(user?.status).toBe(AccountStatus.SUSPENDED);
+    }, 15000);
+
+    it('never lets two concurrent demotions remove every administrator', async () => {
+      const release = await holdUserRows(admin.id, secondAdmin.id);
+
+      const demoteAdmin = patch(
+        `/api/admin/users/${admin.id}/role`,
+        tokenAdmin
+      )
+        .send({ role: 'USER' })
+        .then((res) => res);
+      const demoteSecond = patch(
+        `/api/admin/users/${secondAdmin.id}/role`,
+        secondToken
+      )
+        .send({ role: 'USER' })
+        .then((res) => res);
+
+      try {
+        await sleep(500);
+      } finally {
+        await release();
+      }
+
+      const [first, second] = await Promise.all([demoteAdmin, demoteSecond]);
+      expect([first.status, second.status].sort((a, b) => a - b)).toEqual([
+        200, 409,
+      ]);
+      const rejected = first.status === 409 ? first : second;
+      expect(rejected.body.error.code).toBe('LAST_ADMIN_REQUIRED');
+      expect(await activeAdminCount()).toBe(1);
+
+      const entries = await testPrisma.auditLog.findMany({
+        where: { action: 'ADMIN_USER_ROLE_CHANGED' },
+      });
+      expect(entries).toHaveLength(1);
+    }, 15000);
+
+    it('never lets two concurrent suspensions remove every administrator', async () => {
+      const release = await holdUserRows(admin.id, secondAdmin.id);
+
+      const suspendSecond = patch(
+        `/api/admin/users/${secondAdmin.id}/status`,
+        tokenAdmin
+      )
+        .send({ status: 'SUSPENDED' })
+        .then((res) => res);
+      const suspendAdmin = patch(
+        `/api/admin/users/${admin.id}/status`,
+        secondToken
+      )
+        .send({ status: 'SUSPENDED' })
+        .then((res) => res);
+
+      try {
+        await sleep(500);
+      } finally {
+        await release();
+      }
+
+      const [first, second] = await Promise.all([suspendSecond, suspendAdmin]);
+      expect([first.status, second.status].sort((a, b) => a - b)).toEqual([
+        200, 409,
+      ]);
+      const rejected = first.status === 409 ? first : second;
+      expect(rejected.body.error.code).toBe('LAST_ADMIN_REQUIRED');
+      expect(await activeAdminCount()).toBe(1);
+
+      const survivors = await testPrisma.user.findMany({
+        where: { role: Role.ADMIN },
+        select: { status: true },
+      });
+      expect(survivors.filter((u) => u.status === AccountStatus.ACTIVE)).toHaveLength(1);
+    }, 15000);
+
+    it('a racing status change cannot apply DEACTIVATED to SUSPENDED', async () => {
+      await createSessionFor(admin.id);
+      const release = await holdSessionRows(admin.id);
+      let deactivateStatus: number | undefined;
+
+      const startSuspend = () =>
+        patch(`/api/admin/users/${admin.id}/status`, secondToken)
+          .send({ status: 'SUSPENDED' })
+          .then((res) => res);
+
+      const deactivate = patch(
+        `/api/admin/users/${admin.id}/status`,
+        secondToken
+      )
+        .send({ status: 'DEACTIVATED' })
+        .then((res) => {
+          deactivateStatus = res.status;
+          return res;
+        });
+
+      let suspend: ReturnType<typeof startSuspend> | undefined;
+      try {
+        await sleep(400);
+        expect(deactivateStatus).toBeUndefined();
+
+        suspend = startSuspend();
+        await sleep(300);
+      } finally {
+        await release();
+      }
+
+      const first = await deactivate;
+      const second = suspend ? await suspend : undefined;
+      expect(first.status).toBe(200);
+      expect(second?.status).toBe(409);
+      expect(second?.body.error.code).toBe('INVALID_STATUS_TRANSITION');
+
+      const user = await testPrisma.user.findUnique({ where: { id: admin.id } });
+      expect(user?.status).toBe(AccountStatus.DEACTIVATED);
+    }, 15000);
+
+    it('records the actual predecessor status in audit metadata', async () => {
+      await patch(`/api/admin/users/${userA.id}/status`, tokenAdmin).send({
+        status: 'SUSPENDED',
+      });
+      await patch(`/api/admin/users/${userA.id}/status`, tokenAdmin).send({
+        status: 'ACTIVE',
+      });
+
+      const entries = await testPrisma.auditLog.findMany({
+        where: { action: 'ADMIN_USER_STATUS_CHANGED' },
+      });
+      const transitions = entries.map((entry) => {
+        const metadata = entry.metadata as { from?: string; to?: string };
+        return `${metadata.from}->${metadata.to}`;
+      });
+      expect(transitions.sort()).toEqual(
+        ['ACTIVE->SUSPENDED', 'SUSPENDED->ACTIVE'].sort()
+      );
     });
   });
 });
