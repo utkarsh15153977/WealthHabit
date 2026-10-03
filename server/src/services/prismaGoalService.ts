@@ -8,7 +8,9 @@ import {
   UpdateGoalInput,
 } from '../schemas/goalSchemas.js';
 import { prisma } from '../config/prisma.js';
+import { ApiErrorCodes } from '../types/errorCodes.js';
 import { startOfUtcDay } from '../utils/date.js';
+import { AppError } from '../utils/errors.js';
 import { ZERO } from '../utils/money.js';
 
 export interface GoalListMeta {
@@ -177,37 +179,55 @@ export async function findUserGoal(
   });
 }
 
+/**
+ * Runs `fn` while the goal row is locked with SELECT ... FOR UPDATE, so the
+ * whole status decision is taken against committed-at-acquire state instead
+ * of the snapshot the request handler read before the lock.
+ */
 export async function updateGoal(
   goal: SavingsGoal,
   input: UpdateGoalInput
 ): Promise<SavingsGoal> {
-  const data: Prisma.SavingsGoalUpdateInput = {};
+  return withGoalLock(goal, async (tx) => {
+    const fresh = await tx.savingsGoal.findUnique({ where: { id: goal.id } });
 
-  if (input.name !== undefined) data.name = input.name;
-  if (input.description !== undefined) data.description = input.description;
-  if (input.targetAmount !== undefined) data.targetAmount = input.targetAmount;
-  if (input.targetDate !== undefined) data.targetDate = input.targetDate;
-  if (input.category !== undefined) data.category = input.category;
-  if (input.priority !== undefined) data.priority = input.priority;
-  if (input.monthlyContribution !== undefined) {
-    data.monthlyContribution = input.monthlyContribution;
-  }
+    if (!fresh) {
+      throw AppError.notFound('Goal not found', ApiErrorCodes.GOAL_NOT_FOUND);
+    }
 
-  const intent = input.status ?? goal.status;
-  const nextTarget =
-    input.targetAmount !== undefined
-      ? new Prisma.Decimal(input.targetAmount)
-      : goal.targetAmount;
+    const data: Prisma.SavingsGoalUpdateInput = {};
 
-  // Completion is amount-based: recompute against the fresh contribution sum
-  // whenever intent or target may have changed.
-  const { savedAmount } = await getGoalAggregate(goal.id);
-  const nextStatus = deriveGoalStatus(intent, savedAmount, nextTarget);
-  data.status = nextStatus;
+    if (input.name !== undefined) data.name = input.name;
+    if (input.description !== undefined) data.description = input.description;
+    if (input.targetAmount !== undefined) data.targetAmount = input.targetAmount;
+    if (input.targetDate !== undefined) data.targetDate = input.targetDate;
+    if (input.category !== undefined) data.category = input.category;
+    if (input.priority !== undefined) data.priority = input.priority;
+    if (input.monthlyContribution !== undefined) {
+      data.monthlyContribution = input.monthlyContribution;
+    }
 
-  return prisma.savingsGoal.update({
-    where: { id: goal.id },
-    data,
+    // Status-less requests inherit the intent of the locked row itself, never
+    // of the pre-lock snapshot: an explicit PAUSED/CANCELLED can therefore not
+    // be clobbered, while ACTIVE/COMPLETED keep following the amounts.
+    const intent = input.status ?? fresh.status;
+    const nextTarget =
+      input.targetAmount !== undefined
+        ? new Prisma.Decimal(input.targetAmount)
+        : fresh.targetAmount;
+
+    // Completion is amount-based: the aggregate is read inside the same
+    // transaction as the row lock, so it can never lag a concurrent
+    // contribution that has not been applied yet.
+    const aggregate = await tx.goalContribution.aggregate({
+      where: { goalId: goal.id },
+      _sum: { amount: true },
+    });
+    const savedAmount = aggregate._sum.amount ?? ZERO;
+
+    data.status = deriveGoalStatus(intent, savedAmount, nextTarget);
+
+    return tx.savingsGoal.update({ where: { id: goal.id }, data });
   });
 }
 
@@ -251,10 +271,10 @@ export async function findGoalContribution(
 }
 
 /**
- * Serializes mutations per goal row so concurrent contribution writes cannot
- * compute a stale status, re-reads the goal under the lock, then recomputes
- * status from the contribution sum. PAUSED/CANCELLED intents are never
- * overwritten.
+ * Serializes mutations per goal row so concurrent contribution writes and
+ * goal updates cannot compute a stale status, re-reads the goal under the
+ * lock, then recomputes status from the contribution sum. PAUSED/CANCELLED
+ * intents are never overwritten.
  */
 async function withGoalLock<T>(
   goal: Pick<SavingsGoal, 'id'>,
