@@ -93,29 +93,47 @@ export async function deleteRecurringTransaction(id: string): Promise<void> {
   });
 }
 
-function isOccurrenceDuplicateError(error: unknown): boolean {
-  return (
-    error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002'
-  );
-}
-
 export interface RuleGenerationResult {
   occurrencesCreated: number;
   nextOccurrenceDate: Date;
 }
 
+export interface RuleGenerationHooks {
+  /**
+   * Test seam invoked inside the generation transaction after the occurrence
+   * rows are written and before the cursor compare-and-swap. Throwing here
+   * aborts the whole transaction, which is how rollback is exercised without
+   * relying on timing.
+   */
+  beforeCursorUpdate?: (
+    rule: RecurringTransaction,
+    tx: Prisma.TransactionClient
+  ) => void | Promise<void>;
+}
+
 /**
  * Generates every due occurrence for one rule up to `horizon` (inclusive).
  *
+ * Atomicity: the occurrence writes and the cursor advance for a single rule run
+ * in one interactive transaction, so a failure never leaves generated rows
+ * behind a stale cursor (or a moved cursor without its rows). The transaction
+ * boundary is per rule — a batch over many rules is not one big transaction.
+ *
  * Idempotency: each occurrence is a (recurringTransactionId, transactionDate)
- * pair guarded by a database unique constraint, so re-running generation — even
- * concurrently — can never create a duplicate. The cursor advance is a
- * compare-and-swap so a concurrent update (another run or a user edit) cannot
- * be overwritten.
+ * pair guarded by a database unique constraint, and the write uses
+ * `skipDuplicates`, so re-running generation — even concurrently — can never
+ * create a duplicate and never raises a unique violation inside the
+ * transaction (an unhandled unique violation would abort the transaction).
+ * `occurrencesCreated` is the number of rows the database actually inserted.
+ *
+ * The cursor advance is a compare-and-swap so a concurrent update (another run
+ * or a user edit) cannot be overwritten; when the CAS misses, the fresh cursor
+ * is re-read and reported.
  */
 export async function generateOccurrencesForRule(
   rule: RecurringTransaction,
-  horizon: Date
+  horizon: Date,
+  hooks: RuleGenerationHooks = {}
 ): Promise<RuleGenerationResult> {
   const anchorDay = rule.startDate.getUTCDate();
   const anchorMonthIndex = rule.startDate.getUTCMonth();
@@ -128,30 +146,6 @@ export async function generateOccurrencesForRule(
     anchorDay,
     anchorMonthIndex
   );
-
-  let occurrencesCreated = 0;
-
-  for (const occurrenceDate of dueDates) {
-    try {
-      await prisma.transaction.create({
-        data: {
-          userId: rule.userId,
-          categoryId: rule.categoryId,
-          type: rule.type,
-          amount: rule.amount,
-          description: rule.name,
-          transactionDate: occurrenceDate,
-          recurringTransactionId: rule.id,
-        },
-      });
-      occurrencesCreated += 1;
-    } catch (error) {
-      if (isOccurrenceDuplicateError(error)) {
-        continue;
-      }
-      throw error;
-    }
-  }
 
   if (dueDates.length === 0) {
     return {
@@ -168,22 +162,39 @@ export async function generateOccurrencesForRule(
     rule.frequency
   );
 
-  const updated = await prisma.recurringTransaction.updateMany({
-    where: { id: rule.id, nextOccurrenceDate: rule.nextOccurrenceDate },
-    data: { nextOccurrenceDate: newCursor },
-  });
-
-  if (updated.count === 0) {
-    const fresh = await prisma.recurringTransaction.findUnique({
-      where: { id: rule.id },
+  return prisma.$transaction(async (tx) => {
+    const { count } = await tx.transaction.createMany({
+      data: dueDates.map((occurrenceDate) => ({
+        userId: rule.userId,
+        categoryId: rule.categoryId,
+        type: rule.type,
+        amount: rule.amount,
+        description: rule.name,
+        transactionDate: occurrenceDate,
+        recurringTransactionId: rule.id,
+      })),
+      skipDuplicates: true,
     });
-    return {
-      occurrencesCreated,
-      nextOccurrenceDate: fresh?.nextOccurrenceDate ?? newCursor,
-    };
-  }
 
-  return { occurrencesCreated, nextOccurrenceDate: newCursor };
+    await hooks.beforeCursorUpdate?.(rule, tx);
+
+    const updated = await tx.recurringTransaction.updateMany({
+      where: { id: rule.id, nextOccurrenceDate: rule.nextOccurrenceDate },
+      data: { nextOccurrenceDate: newCursor },
+    });
+
+    if (updated.count === 0) {
+      const fresh = await tx.recurringTransaction.findUnique({
+        where: { id: rule.id },
+      });
+      return {
+        occurrencesCreated: count,
+        nextOccurrenceDate: fresh?.nextOccurrenceDate ?? newCursor,
+      };
+    }
+
+    return { occurrencesCreated: count, nextOccurrenceDate: newCursor };
+  });
 }
 
 export async function generateDueOccurrencesForRule(
