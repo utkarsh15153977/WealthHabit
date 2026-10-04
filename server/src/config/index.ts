@@ -2,6 +2,41 @@ import { isIP } from 'node:net';
 import { config } from 'dotenv';
 config();
 
+/**
+ * Placeholder values that are published in tracked template files, most
+ * importantly `server/.env.production.example`. The documented production
+ * workflow copies that file to `server/.env.production`, so an operator who
+ * replaces only `DATABASE_URL` and `CLIENT_URL` leaves the placeholder in
+ * place. These values are deliberately longer than the 32-character minimum,
+ * so the length rule alone cannot catch them: the server would start and sign
+ * production tokens with signing material that is public in the repository,
+ * letting anyone forge a token for any account.
+ *
+ * Compared case-insensitively after trimming, so a cosmetic edit (casing,
+ * trailing whitespace) cannot bypass the check.
+ */
+const JWT_SECRET_PLACEHOLDER_VALUES = [
+  'replace-with-at-least-32-random-characters-from-a-secret-store',
+];
+
+/**
+ * Anchored, deliberately narrow near-variant guard for the same published
+ * placeholder family (different separator style or a shortened tail), so the
+ * template cannot be bypassed by editing only the wording. A genuinely
+ * generated secret (hex, base64 or base64url) cannot realistically collide
+ * with these English word prefixes.
+ */
+const JWT_SECRET_PLACEHOLDER_PATTERN =
+  /^(replace[-_\s]?with|change[-_\s]?me|change[-_\s]?this|your[-_\s]?(jwt[-_\s]?)?(access[-_\s]?)?secret)/i;
+
+function isJwtSecretPlaceholder(secret: string): boolean {
+  const normalized = secret.trim().toLowerCase();
+  return (
+    JWT_SECRET_PLACEHOLDER_VALUES.includes(normalized) ||
+    JWT_SECRET_PLACEHOLDER_PATTERN.test(normalized)
+  );
+}
+
 function validateJwtSecret(): string {
   const secret = process.env.JWT_ACCESS_SECRET;
 
@@ -18,6 +53,16 @@ function validateJwtSecret(): string {
     }
     console.warn('WARNING: JWT_ACCESS_SECRET is using the default development value. Use a custom secret in production.');
     return secret;
+  }
+
+  if (isJwtSecretPlaceholder(secret)) {
+    if (process.env.NODE_ENV === 'production') {
+      throw new Error(
+        'JWT_ACCESS_SECRET is still the placeholder value from server/.env.production.example. ' +
+          'Generate a unique secret and inject it from a secret store.'
+      );
+    }
+    console.warn('WARNING: JWT_ACCESS_SECRET looks like a template placeholder. Use a unique secret in production.');
   }
 
   if (secret.length < 32) {
