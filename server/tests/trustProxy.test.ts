@@ -1,13 +1,15 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import express from 'express';
 import request from 'supertest';
-import rateLimit from 'express-rate-limit';
+import rateLimit, { ipKeyGenerator } from 'express-rate-limit';
 import app from '../src/app.js';
 import { env, resolveTrustProxy, type TrustProxyValue } from '../src/config/index.js';
 import { apiRateLimit } from '../src/middleware/rateLimit.js';
 
 const FORGED_IP = '203.0.113.99';
 const PROXY_SEEN_IP = '198.51.100.7';
+const CLIENT_A_IP = '198.51.100.10';
+const CLIENT_B_IP = '198.51.100.11';
 
 function buildApp(trustProxy: TrustProxyValue): express.Express {
   const instance = express();
@@ -177,5 +179,77 @@ describe('express-rate-limit proxy validations', () => {
 
     expect(response.status).toBe(200);
     expect(reported(errorSpy.mock.calls, 'ERR_ERL_UNEXPECTED_X_FORWARDED_FOR')).toBe(true);
+  });
+});
+
+describe('SEC-001: rate-limit key separation behind the one-hop nginx topology', () => {
+  /**
+   * A single-request budget with the same `keyGenerator` shape the real limiters
+   * use (`server/src/middleware/rateLimit.ts`), so these assertions reflect the
+   * production keying rather than an express-rate-limit default.
+   */
+  function buildLimitedApp(trustProxy: TrustProxyValue) {
+    const fresh = rateLimit({
+      windowMs: 60_000,
+      max: 1,
+      keyGenerator: (req) => ipKeyGenerator(req.ip ?? '', 56),
+    });
+    const instance = express();
+    instance.set('trust proxy', trustProxy);
+    instance.get('/limited', fresh, (_req, res) => {
+      res.status(200).json({ ok: true });
+    });
+    return instance;
+  }
+
+  it('collapses every client into one shared bucket when trust proxy is disabled', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const instance = buildLimitedApp(resolveTrustProxy('false'));
+
+    const first = await request(instance).get('/limited').set('X-Forwarded-For', CLIENT_A_IP);
+    const second = await request(instance).get('/limited').set('X-Forwarded-For', CLIENT_B_IP);
+
+    // Two different clients, two different forwarded addresses, one bucket: the
+    // second client is throttled by the first client's traffic. This is the
+    // exact failure the production template must not configure.
+    expect(first.status).toBe(200);
+    expect(second.status).toBe(429);
+  });
+
+  it('keys per client IP when the template hop count is used', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    // The value shipped in server/.env.production.example.
+    const instance = buildLimitedApp(resolveTrustProxy('1'));
+
+    const firstA = await request(instance).get('/limited').set('X-Forwarded-For', CLIENT_A_IP);
+    const firstB = await request(instance).get('/limited').set('X-Forwarded-For', CLIENT_B_IP);
+
+    // The load-bearing assertion: a different client is not throttled by the
+    // previous client's request, which is exactly what the shared bucket denied.
+    expect(firstA.status).toBe(200);
+    expect(firstB.status).toBe(200);
+
+    // Per-client limiting must still be enforced, i.e. trust was not disabled:
+    // each client is now independently out of budget.
+    const secondA = await request(instance).get('/limited').set('X-Forwarded-For', CLIENT_A_IP);
+    const secondB = await request(instance).get('/limited').set('X-Forwarded-For', CLIENT_B_IP);
+
+    expect(secondA.status).toBe(429);
+    expect(secondB.status).toBe(429);
+  });
+
+  it('does not let a client rotate its own key by prepending a forged hop', async () => {
+    const instance = buildLimitedApp(resolveTrustProxy('1'));
+
+    const spent = await request(instance).get('/limited').set('X-Forwarded-For', CLIENT_A_IP);
+    expect(spent.status).toBe(200);
+
+    const forged = await request(instance)
+      .get('/limited')
+      .set('X-Forwarded-For', `${FORGED_IP}, ${CLIENT_A_IP}`);
+
+    // With exactly one trusted hop Express reads the right-most entry, so a
+    // client cannot mint a fresh key by prepending a fake address.
+    expect(forged.status).toBe(429);
   });
 });

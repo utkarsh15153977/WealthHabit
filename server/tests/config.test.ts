@@ -1,4 +1,38 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+
+/**
+ * Reads a tracked `KEY=value` style template file. Used to assert the contract
+ * of `server/.env.production.example` itself, so the shipped template cannot
+ * silently drift back to a value the runtime is supposed to reject.
+ */
+function readTemplate(relativePath: string): string {
+  return readFileSync(fileURLToPath(new URL(relativePath, import.meta.url)), 'utf8');
+}
+
+function templateValue(contents: string, key: string): string {
+  for (const line of contents.split(/\r?\n/)) {
+    const match = line.match(new RegExp(`^${key}=(.*)$`));
+    if (match) return match[1].trim();
+  }
+  throw new Error(`${key} is not defined in the template`);
+}
+
+/** Assigned values only, with the file's explanatory comments removed. */
+function templateAssignments(contents: string): string {
+  return contents
+    .split(/\r?\n/)
+    .filter((line) => !/^\s*#/.test(line))
+    .join('\n');
+}
+
+/**
+ * Test-only stand-in for real signing material. Generated-shaped (base64url
+ * alphabet, high entropy) so it exercises the "sufficiently random long secret"
+ * path. It is not a secret and must never be used outside tests.
+ */
+const GENERATED_LOOKING_SECRET = 'k3JtQ8vXpZ1sWn7bYd4LhR2tF6jG0uC9aM5eI3oV8xQ1zN7c';
 
 describe('Config Validation', () => {
   const originalEnv = { ...process.env };
@@ -68,6 +102,101 @@ describe('Config Validation', () => {
         expect.stringContaining('JWT_ACCESS_SECRET is less than 32 characters')
       );
       consoleWarnSpy.mockRestore();
+    });
+
+    it('should throw in production for the placeholder shipped in .env.production.example', async () => {
+      const template = readTemplate('../.env.production.example');
+      const placeholder = templateValue(template, 'JWT_ACCESS_SECRET');
+
+      // Sanity-check that this test is actually exercising a placeholder that is
+      // long enough to satisfy the minimum-length rule. Without this guard the
+      // length check would mask a regression in the placeholder check.
+      expect(placeholder.length).toBeGreaterThanOrEqual(32);
+
+      process.env.JWT_ACCESS_SECRET = placeholder;
+      process.env.NODE_ENV = 'production';
+
+      await expect(import('../src/config/index.js')).rejects.toThrow(
+        'JWT_ACCESS_SECRET is still the placeholder value from server/.env.production.example'
+      );
+    });
+
+    it('should reject near-variants of the published placeholder in production', async () => {
+      process.env.NODE_ENV = 'production';
+
+      for (const variant of [
+        'REPLACE-WITH-AT-LEAST-32-RANDOM-CHARACTERS-FROM-A-SECRET-STORE',
+        '  replace-with-at-least-32-random-characters-from-a-secret-store  ',
+        'replace_with_at_least_32_random_characters_from_a_secret_store',
+        'replace-with-some-other-long-placeholder-value-here',
+        'change-me-before-production-please-0123456789',
+      ]) {
+        vi.resetModules();
+        process.env.JWT_ACCESS_SECRET = variant;
+
+        await expect(import('../src/config/index.js')).rejects.toThrow(
+          'JWT_ACCESS_SECRET is still the placeholder value'
+        );
+      }
+    });
+
+    it('should warn but accept a placeholder in development', async () => {
+      process.env.JWT_ACCESS_SECRET =
+        'replace-with-at-least-32-random-characters-from-a-secret-store';
+      process.env.NODE_ENV = 'development';
+
+      const consoleWarnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      const { env } = await import('../src/config/index.js');
+
+      expect(env.JWT_ACCESS_SECRET).toBe(
+        'replace-with-at-least-32-random-characters-from-a-secret-store'
+      );
+      expect(consoleWarnSpy).toHaveBeenCalledWith(
+        expect.stringContaining('JWT_ACCESS_SECRET looks like a template placeholder')
+      );
+      consoleWarnSpy.mockRestore();
+    });
+
+    it('should accept a sufficiently random long secret in production', async () => {
+      process.env.JWT_ACCESS_SECRET = GENERATED_LOOKING_SECRET;
+      process.env.NODE_ENV = 'production';
+
+      const consoleWarnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      const { env } = await import('../src/config/index.js');
+
+      expect(env.JWT_ACCESS_SECRET).toBe(GENERATED_LOOKING_SECRET);
+      // A real generated secret must not be flagged by any JWT-related rule.
+      expect(consoleWarnSpy).not.toHaveBeenCalledWith(
+        expect.stringContaining('JWT_ACCESS_SECRET')
+      );
+      consoleWarnSpy.mockRestore();
+    });
+
+    it('should reject a short placeholder with the placeholder error, not the length error', async () => {
+      process.env.JWT_ACCESS_SECRET = 'replace-with-me';
+      process.env.NODE_ENV = 'production';
+
+      // The placeholder check runs first so the operator gets the actionable
+      // message regardless of how short the placeholder happens to be.
+      await expect(import('../src/config/index.js')).rejects.toThrow(
+        'JWT_ACCESS_SECRET is still the placeholder value'
+      );
+    });
+  });
+
+  describe('SEC-002 production example contract', () => {
+    it('keeps the shipped JWT placeholder rejectable and free of usable secrets', () => {
+      const template = readTemplate('../.env.production.example');
+      const assigned = templateAssignments(template);
+
+      // The template must still carry a placeholder (it is documentation, not a
+      // secret store) and must never carry real signing material. Only assigned
+      // values are inspected: the file's comments legitimately *name* the
+      // development values it tells operators never to reuse.
+      expect(template).toContain('JWT_ACCESS_SECRET=replace-with-');
+      expect(assigned).not.toContain('dev-secret-change-in-production');
+      expect(assigned).not.toMatch(/localhost:5433/);
+      expect(assigned).not.toMatch(/rds\.amazonaws\.com/);
     });
   });
 
@@ -271,6 +400,38 @@ describe('Config Validation', () => {
         expect.stringContaining('TRUST_PROXY')
       );
       consoleWarnSpy.mockRestore();
+    });
+  });
+
+  describe('SEC-001 production example contract', () => {
+    it('declares exactly one trusted hop, matching the shipped nginx topology', async () => {
+      const template = readTemplate('../.env.production.example');
+      const declared = templateValue(template, 'TRUST_PROXY');
+
+      // docker-compose.production.yml publishes only the client nginx and keeps
+      // the API internal, so the API always sits behind exactly one proxy hop.
+      expect(declared).toBe('1');
+
+      const { resolveTrustProxy } = await import('../src/config/index.js');
+      expect(resolveTrustProxy(declared)).toBe(1);
+
+      const consoleWarnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      expect(resolveTrustProxy(declared)).toBe(1);
+      // A correct hop count must not be silently downgraded to the safe default.
+      expect(consoleWarnSpy).not.toHaveBeenCalledWith(
+        expect.stringContaining('TRUST_PROXY')
+      );
+      consoleWarnSpy.mockRestore();
+    });
+
+    it('does not ship a value that would collapse rate-limit keys', async () => {
+      const template = readTemplate('../.env.production.example');
+      const declared = templateValue(template, 'TRUST_PROXY');
+      const { resolveTrustProxy } = await import('../src/config/index.js');
+
+      // The regression this guards: TRUST_PROXY=false shipped in the template
+      // while the API always sits behind one nginx hop.
+      expect(resolveTrustProxy(declared)).not.toBe(false);
     });
   });
 });
