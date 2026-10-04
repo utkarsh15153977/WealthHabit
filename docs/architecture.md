@@ -1094,6 +1094,75 @@ findings (H-3 and part of H-8) on top of that seam.
   hop-count choice, no changes to JWT/session architecture, and no other
   authentication endpoints receive the email-keyed limiter.
 
+## Production Runtime & Environment Separation (Phase 5G-10)
+
+Production is two container images plus an explicitly separate environment
+scope. Nothing in the application, the Prisma schema, the migrations, the test
+database safety rules or the development workflow changed for this phase — only
+build, packaging and configuration documentation.
+
+### Configuration scopes
+
+| Scope | Source | Notes |
+|-------|--------|-------|
+| Development | `.env`, `server/.env`, `client/.env` (from `*.example`) | localhost PostgreSQL `:5433`, API `:5000`, Vite `:5173` |
+| Test | derived, no file | `NODE_ENV=test`; `server/scripts/lib/dbSafety.ts` resolves a localhost `*_test` database and refuses production/AWS targets; unchanged by this phase |
+| Production | `server/.env.production` (git-ignored, from `server/.env.production.example`) | injected at container start; `NODE_ENV=production`, external `DATABASE_URL`, external `JWT_ACCESS_SECRET`, real `CLIENT_URL`, topology-dependent `TRUST_PROXY` |
+
+The server already enforced the production guards (`server/src/config/index.ts`):
+JWT secret validation (present, ≥ 32 chars, not the dev default), forced
+`COOKIE_SECURE`, `TRUST_PROXY=true` rejected. The images add no new behaviour —
+they only guarantee the file-less container actually reaches that code with
+injected values.
+
+### Images
+
+| Image | Stages | Runs |
+|-------|--------|------|
+| `server/Dockerfile` | builder: `npm ci` → `prisma generate && tsc`; runtime: production deps + generated Prisma client + `dist` | `node dist/server.js` as uid 10001; `HEALTHCHECK` = `GET /api/health/ready` |
+| `client/Dockerfile` | builder: `npm ci` → `tsc && vite build`; runtime: nginx | static `dist/` on 8080 as the unprivileged `nginx` user, `/api/*` proxied to `API_PROXY_PASS` |
+
+Both build from the repository root context, so the root `.dockerignore`
+applies to both: `.env*`, `*.pem` (including `global-bundle.pem`), `.git`,
+`node_modules`, logs, coverage and local `dist` output never enter a build
+context. Images carry no secrets and no `.env` file; `NODE_ENV`, `PORT`,
+`DATABASE_URL`, `JWT_ACCESS_SECRET`, `CLIENT_URL`, `COOKIE_*` and `TRUST_PROXY`
+are runtime-injected.
+
+Startup/shutdown are unchanged: `server/src/lifecycle.ts` still performs the
+startup database check (exit 1 if unreachable), and SIGTERM from `docker stop`
+drains the HTTP server, disconnects Prisma and exits 0.
+
+### Frontend configuration
+
+`VITE_*` values are build-time only — Vite inlines them into the bundle, so
+they are browser-visible and require a rebuild to change. The default leaves
+`VITE_API_BASE_URL` unset, which makes the bundle call the same origin at
+`/api`; the client image proxies that path (one hop, matching `TRUST_PROXY=1`
+in the example production file). Cross-origin deployments must set the build
+arg *and* `CLIENT_URL`, `COOKIE_SAME_SITE=none`, `COOKIE_SECURE=true`.
+
+### Health, readiness and database separation
+
+- `GET /api/health` (liveness) and `GET /api/health/ready` (readiness via
+  `SELECT 1`) are mounted before `apiRateLimit`, so probes are never throttled.
+  The image healthcheck uses readiness, so a container is marked unhealthy when
+  the database is unreachable while liveness still reports 200.
+- `docker-compose.yml` remains the development PostgreSQL only.
+  `docker-compose.production.yml` starts **no** database, publishes only the
+  client port 8080, exposes the API inside the compose network only, requires
+  `server/.env.production` (`required: true`, so an unconfigured run fails
+  closed) and gates the client on `condition: service_healthy`. Real production
+  database hosting is external (managed PostgreSQL / RDS).
+- No migration runs at container start; applying schema changes stays an
+  out-of-band, explicitly invoked operation.
+
+### Out of scope / follow-ups
+
+Automated `prisma migrate deploy` as a deployment step, CI/CD image publishing,
+Kubernetes/Terraform, a shared rate-limit store and TLS termination are all
+later milestones; nothing cloud-specific was added here.
+
 ## Design Principles
 
 - Separation of concerns

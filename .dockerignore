@@ -1,0 +1,57 @@
+# Docker build context exclusions (single root context for both images:
+# server/Dockerfile and client/Dockerfile build from the repository root so
+# they can share the npm workspaces lockfile).
+
+# Version control / tooling
+.git
+.gitattributes
+.gitmodules
+.kilo
+.vscode
+.idea
+**/.DS_Store
+**/Thumbs.db
+
+# Dependencies (always installed fresh inside the image)
+node_modules
+**/node_modules
+
+# Environment files must never enter a build context or an image layer.
+# Examples are excluded too: they are documentation, not build input.
+.env
+.env.*
+**/.env
+**/.env.*
+
+# Keys and certificates (global-bundle.pem must never be copied into an image)
+*.pem
+**/*.pem
+*.key
+**/*.key
+*.crt
+**/*.crt
+
+# Logs and coverage
+*.log
+**/*.log
+logs
+**/logs
+coverage
+**/coverage
+
+# Local build artifacts (images rebuild their own)
+dist
+**/dist
+build
+**/build
+*.tsbuildinfo
+**/*.tsbuildinfo
+
+# Local database files and dumps (Prisma migration SQL stays in the context:
+# it is tracked source, and no container runs migrations at start-up)
+*.sqlite
+**/*.sqlite
+*.db
+**/*.db
+*.dump
+**/*.dump

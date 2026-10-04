@@ -69,6 +69,9 @@ WealthHabit/
 │   │   ├── main.tsx
 │   │   └── index.css
 │   ├── public/
+│   ├── Dockerfile         # Production image: Vite build -> nginx
+│   ├── nginx/             # Production nginx config + /api proxy template
+│   ├── .env.production.example
 │   ├── package.json
 │   └── tsconfig.json
 │
@@ -87,6 +90,8 @@ WealthHabit/
 │   │   └── server.ts
 │   ├── prisma/
 │   │   └── schema.prisma
+│   ├── Dockerfile         # Production image: prisma generate + tsc -> node dist/server.js
+│   ├── .env.production.example
 │   ├── package.json
 │   └── tsconfig.json
 │
@@ -95,9 +100,11 @@ WealthHabit/
 │   ├── development.md
 │   └── roadmap.md
 │
+├── .dockerignore
 ├── .env.example
 ├── .gitignore
-├── docker-compose.yml
+├── docker-compose.yml               # development PostgreSQL only
+├── docker-compose.production.yml    # production app containers, no database
 ├── package.json
 └── README.md
 ```
@@ -162,6 +169,21 @@ WealthHabit/
 | Health Check | http://localhost:5000/api/health |
 
 ## Environment Variables
+
+Configuration is split into three scopes that never share values:
+
+| Scope | Source of values | Read by |
+|-------|------------------|---------|
+| **Development** | `.env`, `server/.env`, `client/.env` — each created from its `*.example` file | `npm run dev`, `npm run build` on your machine |
+| **Test** | No file: derived at run time | `server/vitest.config.ts` sets `NODE_ENV=test` and resolves a localhost `*_test` database through `server/scripts/lib/dbSafety.ts` (`TEST_DATABASE_URL`, `ALLOW_REMOTE_TEST_DB`, `E2E_ALLOW_DB`) |
+| **Production** | `server/.env.production`, created from `server/.env.production.example` and injected by the deployment | the production containers (`docker-compose.production.yml`) |
+
+The production scope is documented in
+[`server/.env.production.example`](server/.env.production.example) and in
+[Production Containers](#production-containers) below. Development defaults are
+never valid in production: the server refuses to start with a missing/default
+JWT secret when `NODE_ENV=production`, forces secure cookies, and rejects
+`TRUST_PROXY=true`.
 
 ### Root (.env)
 | Variable | Description | Default |
@@ -263,6 +285,117 @@ TLS termination itself is not implemented here — it is a deployment concern
 that must be resolved together with `TRUST_PROXY`.
 
 
+## Production Containers
+
+Production runs from two images built from the repository root (npm workspaces
+share one lockfile). The root `docker-compose.yml` is a **development-only**
+PostgreSQL on `localhost:5433`; it is not part of production, and no container
+here starts or talks to a database that lives on the developer machine.
+
+### Images and responsibilities
+
+| Image | Dockerfile | Responsibility |
+|-------|------------|----------------|
+| `wealthhabit-server` | `server/Dockerfile` | Multi-stage build: dependencies + `prisma generate && tsc` in the builder, production dependencies only in the runtime image. Runs `node dist/server.js` as a non-root user (uid 10001). Carries the container `HEALTHCHECK`. |
+| `wealthhabit-client` | `client/Dockerfile` | Multi-stage build: `tsc && vite build` in a Node stage, then the static `dist/` served by nginx as the unprivileged `nginx` user on port 8080, with `/api/*` proxied to the API container. |
+
+- **No secrets in images.** The root `.dockerignore` excludes `.env`, `.env.*`,
+  `*.pem`, `.git`, `node_modules`, logs, coverage and local build output from
+  the build context, so `global-bundle.pem` and every `.env` file stay out of
+  every image layer. Runtime configuration is injected when the container runs.
+- **No migrations at start-up.** A container start cannot change the schema;
+  apply Prisma migrations out of band against the production database (see
+  **Follow-ups** below).
+- **Graceful shutdown is preserved**: the image runs Node as PID 1 with the
+  existing `server/src/lifecycle.ts` handlers, so `docker stop` drains
+  connections, disconnects Prisma and exits 0.
+
+### Required production environment variables
+
+Injected through `server/.env.production` (git-ignored) or your platform's
+secret store — see `server/.env.production.example` for the annotated list.
+
+| Variable | Requirement |
+|----------|-------------|
+| `NODE_ENV` | Must be `production` (the compose file forces it) |
+| `DATABASE_URL` | Externally supplied; never a development or `localhost` value |
+| `JWT_ACCESS_SECRET` | Externally supplied, ≥ 32 characters; the server refuses to start otherwise |
+| `CLIENT_URL` | The real deployed frontend origin (CORS for credentialed requests) |
+| `COOKIE_SECURE` / `COOKIE_SAME_SITE` | Cookie configuration; production forces `COOKIE_SECURE=true`, which needs HTTPS end to end |
+| `TRUST_PROXY` | Topology-dependent (unset/`false`/hop count/list). **Never** `true` — the literal is rejected at start-up |
+| `PORT` | Container listen port (image default 5000) |
+
+**Never commit a filled-in `.env.production`.** `.gitignore` covers `.env.*`;
+only `*.example` files are tracked.
+
+### Frontend configuration: build-time, not runtime
+
+Every `VITE_*` variable is inlined into the JavaScript bundle by Vite **at
+build time**, so it is readable in the browser (no secrets, ever) and changing
+it means rebuilding the image:
+
+```bash
+docker build -f client/Dockerfile --build-arg VITE_API_BASE_URL=https://api.example.com/api .
+```
+
+Left unset (the default), the bundle calls the same origin at `/api` and the
+client image proxies that path to the API container — same origin, no CORS, and
+the refresh cookie stays `SameSite=Lax`. `client/.env.production.example`
+documents the cross-origin alternative and the server settings it requires.
+
+### Health and readiness endpoints
+
+| Endpoint | Meaning | Used by |
+|----------|---------|---------|
+| `GET /api/health` | Liveness — process is up, no dependencies | manual checks, external liveness probes |
+| `GET /api/health/ready` | Readiness — database answers `SELECT 1` (503 otherwise) | the server image `HEALTHCHECK`, and `depends_on: condition: service_healthy` in the compose file |
+
+Both are mounted before the API rate limiter, so probes never consume budget.
+
+### Database separation
+
+| Database | Where | Used by |
+|----------|-------|---------|
+| `wealthhabit` on `localhost:5433` | development `docker-compose.yml` | local development only |
+| `wealthhabit_test` on `localhost:5433` | same container | automated tests (enforced by `server/scripts/lib/dbSafety.ts`) |
+| production database | external (managed PostgreSQL/RDS), never started by this repository | production containers, via an injected `DATABASE_URL` |
+
+`docker-compose.production.yml` starts **no** database and publishes no
+database port; only the client's port 8080 is published, and the API port is
+reachable only inside the compose network.
+
+### Running the production stack locally
+
+```bash
+cp server/.env.production.example server/.env.production   # edit; git-ignored
+docker compose -f docker-compose.production.yml up -d --build
+
+curl http://localhost:8080/api/health          # liveness, through the client proxy
+curl http://localhost:8080/api/health/ready    # readiness (database) through the proxy
+
+docker compose -f docker-compose.production.yml down
+```
+
+For a local smoke test, point `DATABASE_URL` at a reachable PostgreSQL
+(`host.docker.internal:5433` works from the compose containers). That is a
+**smoke test only**: it is not a production database, and the containers never
+start the development PostgreSQL themselves.
+
+### Follow-ups (deliberately not in this milestone)
+
+- **Migrations in deployment**: a dedicated job running
+  `prisma migrate deploy` out of band, before the new image receives traffic.
+  Container start deliberately never mutates the schema.
+- **Image slimming**: `@prisma/client` declares `prisma` as a peer dependency,
+  so npm installs the Prisma CLI and `@prisma/engines` (~45 MB) into the
+  runtime image even though nothing invokes them at start-up. They are kept
+  because the eventual out-of-band migration step may want them in-container;
+  dropping them is safe only once that strategy exists.
+- **CI/CD build & publish** of these images, and Kubernetes/Terraform, belong
+  to later milestones.
+- **TLS termination** and the matching `TRUST_PROXY` hop count are deployment
+  concerns that must be resolved together.
+
 ## Available Scripts
 
 | Command | Description |
@@ -307,6 +440,12 @@ The test database name is derived from `DATABASE_URL` by appending `_test`
 (e.g. `.../wealthhabit` → `.../wealthhabit_test`). To use a different one, set
 `TEST_DATABASE_URL`. As a safety net, `server/tests/setup.ts` refuses to run
 unless the resolved database name ends with `_test`.
+
+Tests can never inherit a production or remote `DATABASE_URL`: a non-local
+target is skipped with a `[db-safety] Ignoring DATABASE_URL target ...` warning
+and the safe local `*_test` database is used instead, AWS hosts are always
+refused, and `NODE_ENV=production` is rejected outright. This is unchanged by
+the container work — no production environment file is read by the test runner.
 
 First-time setup:
 

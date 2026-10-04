@@ -1,0 +1,67 @@
+# WealthHabit — PRODUCTION container topology.
+#
+# Deliberately separate from ./docker-compose.yml, which only starts the local
+# development PostgreSQL (localhost:5433) and is never used here. Real
+# production database hosting is EXTERNAL (managed PostgreSQL / RDS): this
+# file starts no database and publishes no database port.
+#
+#   cp server/.env.production.example server/.env.production   # then edit
+#   docker compose -f docker-compose.production.yml up -d --build
+#
+# No secret is hard-coded here. Everything environment-specific (DATABASE_URL,
+# JWT_ACCESS_SECRET, CLIENT_URL, COOKIE_*, TRUST_PROXY) is injected from
+# server/.env.production, which is git-ignored. The API port is only reachable
+# inside this compose network; only the client nginx is published.
+
+name: wealthhabit-production
+
+services:
+  server:
+    build:
+      context: .
+      dockerfile: server/Dockerfile
+    image: wealthhabit-server:latest
+    env_file:
+      - path: server/.env.production
+        required: true
+    environment:
+      # Non-negotiable regardless of what the env file contains.
+      NODE_ENV: production
+      PORT: "5000"
+    # Internal only - no `ports:` entry, so 5000 is never published.
+    expose:
+      - "5000"
+    # Lets a smoke test reach a database running on the host
+    # (host.docker.internal). Harmless when DATABASE_URL points elsewhere.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    # The healthcheck itself comes from the image (GET /api/health/ready), so
+    # the client below only starts once the API answers with the database up.
+    restart: unless-stopped
+    networks:
+      - app
+
+  client:
+    build:
+      context: .
+      dockerfile: client/Dockerfile
+    image: wealthhabit-client:latest
+    environment:
+      # Same-origin API: nginx forwards /api/* to the server container.
+      API_PROXY_PASS: http://server:5000
+    ports:
+      - "8080:8080"
+    depends_on:
+      server:
+        condition: service_healthy
+        # nginx resolves the API address once at start-up (see the client
+        # nginx template), so restart it whenever the API container restarts
+        # or is recreated with a new address.
+        restart: true
+    restart: unless-stopped
+    networks:
+      - app
+
+networks:
+  app:
+    driver: bridge
