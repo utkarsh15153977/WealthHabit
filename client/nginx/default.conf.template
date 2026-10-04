@@ -1,0 +1,46 @@
+# Rendered to /etc/nginx/conf.d/default.conf by the nginx image entrypoint
+# (envsubst) at container start, so ${API_PROXY_PASS} is a run-time value.
+
+server {
+  listen 8080;
+  listen [::]:8080;
+  server_name _;
+
+  root /usr/share/nginx/html;
+  index index.html;
+
+  # Same-origin API proxy: the built bundle calls relative "/api/..." unless
+  # VITE_API_BASE_URL was given at build time. Exactly one proxy hop sits in
+  # front of the API here, which is what TRUST_PROXY=1 describes.
+  #
+  # ${API_PROXY_PASS} is substituted by the nginx image entrypoint at start-up,
+  # so the upstream host is resolved once, at start-up: the API container must
+  # already exist (compose waits for the server healthcheck) and nginx must be
+  # restarted whenever the API container is recreated with a new address.
+  location /api/ {
+    proxy_pass ${API_PROXY_PASS};
+    proxy_http_version 1.1;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+  }
+
+  # Content-hashed build output is immutable.
+  location /assets/ {
+    expires 1y;
+    add_header Cache-Control "public, immutable";
+    try_files $uri =404;
+  }
+
+  # The shell must always be revalidated, otherwise a stale index.html can
+  # reference hashed assets from a previous release.
+  location = /index.html {
+    add_header Cache-Control "no-cache";
+  }
+
+  # Single-page app: unknown paths fall back to the shell.
+  location / {
+    try_files $uri $uri/ /index.html;
+  }
+}
