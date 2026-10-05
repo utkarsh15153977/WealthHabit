@@ -8,6 +8,7 @@ import { Role, AccountStatus, CategoryType, TransactionType } from '@prisma/clie
 import { errorHandler } from '../src/middleware/errorHandler.js';
 import categoryRoutes from '../src/routes/categoryRoutes.js';
 import transactionRoutes from '../src/routes/transactionRoutes.js';
+import budgetRoutes from '../src/routes/budgetRoutes.js';
 
 describe('Transactions API', () => {
   let app: express.Express;
@@ -69,6 +70,7 @@ describe('Transactions API', () => {
     app.use(cookieParser());
     app.use('/api/categories', categoryRoutes);
     app.use('/api/transactions', transactionRoutes);
+    app.use('/api/budgets', budgetRoutes);
     app.use(errorHandler);
   });
 
@@ -479,5 +481,212 @@ describe('Transactions API', () => {
       where: { id: res.body.data.transaction.id },
     });
     expect(db?.amount.toString()).toBe('0.1');
+  });
+
+  describe('FIN-002 transaction/category type consistency', () => {
+    const MISMATCH_MESSAGE = 'Category type must match the transaction type';
+
+    it('accepts an expense transaction with an expense category', async () => {
+      const res = await createTx(tokenA, {
+        categoryId: expenseCatA,
+        type: 'EXPENSE',
+        amount: '30.00',
+        transactionDate: '2026-01-20T10:00:00.000Z',
+      });
+
+      expect(res.status).toBe(201);
+      expect(res.body.data.transaction.type).toBe('EXPENSE');
+      expect(res.body.data.transaction.category.type).toBe('EXPENSE');
+    });
+
+    it('accepts an income transaction with an income category', async () => {
+      const res = await createTx(tokenA, {
+        categoryId: incomeCatA,
+        type: 'INCOME',
+        amount: '1200.00',
+        transactionDate: '2026-01-20T10:00:00.000Z',
+      });
+
+      expect(res.status).toBe(201);
+      expect(res.body.data.transaction.type).toBe('INCOME');
+      expect(res.body.data.transaction.category.type).toBe('INCOME');
+    });
+
+    it('rejects an expense transaction with an income category', async () => {
+      const res = await createTx(tokenA, {
+        categoryId: incomeCatA,
+        type: 'EXPENSE',
+        amount: '30.00',
+        transactionDate: '2026-01-20T10:00:00.000Z',
+      });
+
+      expect(res.status).toBe(400);
+      expect(res.body.error.code).toBe('VALIDATION_ERROR');
+      expect(res.body.errors['body.categoryId']).toEqual([MISMATCH_MESSAGE]);
+      expect(await testPrisma.transaction.count({ where: { userId: userA.id } })).toBe(0);
+    });
+
+    it('rejects an income transaction with an expense category', async () => {
+      const res = await createTx(tokenA, {
+        categoryId: expenseCatA,
+        type: 'INCOME',
+        amount: '30.00',
+        transactionDate: '2026-01-20T10:00:00.000Z',
+      });
+
+      expect(res.status).toBe(400);
+      expect(res.body.error.code).toBe('VALIDATION_ERROR');
+      expect(res.body.errors['body.categoryId']).toEqual([MISMATCH_MESSAGE]);
+      expect(await testPrisma.transaction.count({ where: { userId: userA.id } })).toBe(0);
+    });
+
+    it('rejects an update that moves the transaction to a mismatching category', async () => {
+      const created = await createTx(tokenA, {
+        categoryId: expenseCatA,
+        type: 'EXPENSE',
+        amount: '60.00',
+        transactionDate: '2026-01-21T10:00:00.000Z',
+      });
+      const id = created.body.data.transaction.id;
+
+      const res = await request(app)
+        .patch(`/api/transactions/${id}`)
+        .set('Authorization', `Bearer ${tokenA}`)
+        .send({ categoryId: incomeCatA });
+
+      expect(res.status).toBe(400);
+      expect(res.body.error.code).toBe('VALIDATION_ERROR');
+      expect(res.body.errors['body.categoryId']).toEqual([MISMATCH_MESSAGE]);
+
+      const unchanged = await testPrisma.transaction.findUnique({
+        where: { id },
+        include: { category: true },
+      });
+      expect(unchanged?.type).toBe('EXPENSE');
+      expect(unchanged?.categoryId).toBe(expenseCatA);
+      expect(unchanged?.category.type).toBe('EXPENSE');
+    });
+
+    it('rejects an update that changes the type away from the existing category', async () => {
+      const created = await createTx(tokenA, {
+        categoryId: expenseCatA,
+        type: 'EXPENSE',
+        amount: '65.00',
+        transactionDate: '2026-01-21T11:00:00.000Z',
+      });
+      const id = created.body.data.transaction.id;
+
+      const res = await request(app)
+        .patch(`/api/transactions/${id}`)
+        .set('Authorization', `Bearer ${tokenA}`)
+        .send({ type: 'INCOME' });
+
+      expect(res.status).toBe(400);
+      expect(res.body.error.code).toBe('VALIDATION_ERROR');
+      expect(res.body.errors['body.type']).toEqual([MISMATCH_MESSAGE]);
+
+      const unchanged = await testPrisma.transaction.findUnique({
+        where: { id },
+        include: { category: true },
+      });
+      expect(unchanged?.type).toBe('EXPENSE');
+      expect(unchanged?.category.type).toBe('EXPENSE');
+    });
+
+    it('accepts an update that changes type and category together to a matching pair', async () => {
+      const created = await createTx(tokenA, {
+        categoryId: expenseCatA,
+        type: 'EXPENSE',
+        amount: '70.00',
+        transactionDate: '2026-01-21T12:00:00.000Z',
+      });
+      const id = created.body.data.transaction.id;
+
+      const res = await request(app)
+        .patch(`/api/transactions/${id}`)
+        .set('Authorization', `Bearer ${tokenA}`)
+        .send({ type: 'INCOME', categoryId: incomeCatA, description: 'Reclassified' });
+
+      expect(res.status).toBe(200);
+      expect(res.body.data.transaction.type).toBe('INCOME');
+      expect(res.body.data.transaction.categoryId).toBe(incomeCatA);
+      expect(res.body.data.transaction.category.type).toBe('INCOME');
+      expect(res.body.data.transaction.description).toBe('Reclassified');
+    });
+
+    it('accepts an update that changes neither type nor category', async () => {
+      const created = await createTx(tokenA, {
+        categoryId: expenseCatA,
+        type: 'EXPENSE',
+        amount: '75.00',
+        transactionDate: '2026-01-21T13:00:00.000Z',
+      });
+      const id = created.body.data.transaction.id;
+
+      const res = await request(app)
+        .patch(`/api/transactions/${id}`)
+        .set('Authorization', `Bearer ${tokenA}`)
+        .send({ amount: '80.00', paymentMethod: 'card' });
+
+      expect(res.status).toBe(200);
+      expect(res.body.data.transaction.type).toBe('EXPENSE');
+      expect(res.body.data.transaction.categoryId).toBe(expenseCatA);
+      expect(res.body.data.transaction.amount).toBe(80);
+      expect(res.body.data.transaction.paymentMethod).toBe('card');
+    });
+
+    it('keeps rejecting another user category', async () => {
+      const res = await createTx(tokenA, {
+        categoryId: privateCatB,
+        type: 'EXPENSE',
+        amount: '10.00',
+        transactionDate: '2026-01-21T14:00:00.000Z',
+      });
+
+      expect(res.status).toBe(404);
+      expect(res.body.error.code).toBe('CATEGORY_NOT_FOUND');
+    });
+
+    it('keeps a matching expense counted by budget progress and blocks the bypass', async () => {
+      const month = '2026-03';
+      const inMonth = '2026-03-12T10:00:00.000Z';
+
+      const budget = await request(app)
+        .post('/api/budgets')
+        .set('Authorization', `Bearer ${tokenA}`)
+        .send({ name: 'Food Budget', amount: '500', month, categoryId: expenseCatA });
+      expect(budget.status).toBe(201);
+      const budgetId = budget.body.data.budget.id;
+
+      const valid = await createTx(tokenA, {
+        categoryId: expenseCatA,
+        type: 'EXPENSE',
+        amount: '100.00',
+        transactionDate: inMonth,
+      });
+      expect(valid.status).toBe(201);
+
+      const attempt = await createTx(tokenA, {
+        categoryId: incomeCatA,
+        type: 'EXPENSE',
+        amount: '400.00',
+        transactionDate: inMonth,
+      });
+      expect(attempt.status).toBe(400);
+      expect(attempt.body.errors['body.categoryId']).toEqual([MISMATCH_MESSAGE]);
+
+      const progress = await request(app)
+        .get(`/api/budgets/${budgetId}/progress`)
+        .set('Authorization', `Bearer ${tokenA}`);
+
+      expect(progress.status).toBe(200);
+      expect(progress.body.data.progress).toMatchObject({
+        budgetAmount: 500,
+        spent: 100,
+        remaining: 400,
+        percentageUsed: 20,
+        transactionCount: 1,
+      });
+    });
   });
 });
