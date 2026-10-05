@@ -15,7 +15,7 @@ import { Loading } from '../components/Loading';
 import { getApiErrorMessage } from '../services/error';
 import { getMyProfile } from '../services/userApi';
 import { goalApi } from '../services/goalApi';
-import { formatDate } from '../utils/date';
+import { formatDate, todayForDateInput } from '../utils/date';
 import type {
   Goal,
   GoalContribution,
@@ -134,15 +134,11 @@ function createCurrencyFormatter(currency: string | null): (amount: number) => s
   };
 }
 
-function todayIsoDay(): string {
-  return new Date().toISOString().slice(0, 10);
-}
-
 function emptyGoalForm(): GoalForm {
   return {
     name: '',
     targetAmount: '',
-    targetDate: todayIsoDay(),
+    targetDate: todayForDateInput(),
     description: '',
     category: '',
     priority: 'MEDIUM',
@@ -212,7 +208,7 @@ export function Goals() {
     resolver: zodResolver(contributionFormSchema),
     defaultValues: {
       amount: '',
-      contributionDate: todayIsoDay(),
+      contributionDate: todayForDateInput(),
       note: '',
     },
   });
@@ -394,7 +390,7 @@ export function Goals() {
     setEditingContribution(null);
     resetContribution({
       amount: '',
-      contributionDate: todayIsoDay(),
+      contributionDate: todayForDateInput(),
       note: '',
     });
     setContributionsGoal(goal);
@@ -408,7 +404,7 @@ export function Goals() {
     setContributionsError(null);
     resetContribution({
       amount: '',
-      contributionDate: todayIsoDay(),
+      contributionDate: todayForDateInput(),
       note: '',
     });
   }, [resetContribution]);
@@ -444,7 +440,7 @@ export function Goals() {
         setEditingContribution(null);
         resetContribution({
           amount: '',
-          contributionDate: todayIsoDay(),
+          contributionDate: todayForDateInput(),
           note: '',
         });
         await fetchContributions(contributionsGoal.id);
@@ -479,7 +475,7 @@ export function Goals() {
     setEditingContribution(null);
     resetContribution({
       amount: '',
-      contributionDate: todayIsoDay(),
+      contributionDate: todayForDateInput(),
       note: '',
     });
   }, [resetContribution]);
