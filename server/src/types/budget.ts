@@ -37,4 +37,7 @@ export interface BudgetDataWithProgress extends BudgetData {
 
 export interface BudgetListData {
   budgets: BudgetDataWithProgress[];
+  page: number;
+  pageSize: number;
+  total: number;
 }

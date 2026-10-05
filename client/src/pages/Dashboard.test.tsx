@@ -1,5 +1,5 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, within } from '@testing-library/react';
+﻿import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { render, screen, within, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { Dashboard } from './Dashboard';
 import { getDashboardSummary } from '../services/dashboardApi';
@@ -560,6 +560,71 @@ describe('Dashboard savings goals card', () => {
     const alert = await screen.findByRole('alert');
     expect(alert).toHaveTextContent('Goals unavailable');
     expect(screen.queryByTestId('dashboard-goals-summary')).toBeNull();
+  });
+});
+
+describe('Dashboard budgets card pagination', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockedAssetLiabilitySummary.mockResolvedValue(zeroAssetLiabilitySummary);
+    mockedSummary.mockResolvedValue(emptySummary);
+    vi.mocked(budgetApi.getBudgets).mockResolvedValue({
+      budgets: [],
+      page: 1,
+      pageSize: 50,
+      total: 0,
+    } as Awaited<ReturnType<typeof budgetApi.getBudgets>>);
+    vi.mocked(
+      recurringTransactionApi.getRecurringTransactions
+    ).mockResolvedValue({
+      recurringTransactions: [],
+      page: 1,
+      pageSize: 20,
+      total: 0,
+    } as Awaited<
+      ReturnType<typeof recurringTransactionApi.getRecurringTransactions>
+    >);
+    vi.mocked(billApi.getBills).mockResolvedValue({
+      bills: [],
+      page: 1,
+      pageSize: 20,
+      total: 0,
+    } as Awaited<ReturnType<typeof billApi.getBills>>);
+    vi.mocked(subscriptionApi.getSubscriptions).mockResolvedValue({
+      subscriptions: [],
+      page: 1,
+      pageSize: 20,
+      total: 0,
+    } as Awaited<ReturnType<typeof subscriptionApi.getSubscriptions>>);
+    vi.mocked(notificationApi.getUnreadCount).mockResolvedValue({
+      unreadCount: 0,
+    });
+    vi.mocked(notificationApi.generateNotifications).mockResolvedValue({
+      created: 0,
+    });
+    mockedHabits.mockResolvedValue({
+      habits: [],
+      page: 1,
+      pageSize: 50,
+      total: 0,
+    });
+    mockedChallenges.mockResolvedValue(emptyChallengeList);
+    mockedGoals.mockResolvedValue(emptyGoalList);
+  });
+
+  it('requests budgets for the selected month with the maximum page size', async () => {
+    renderDashboard();
+
+    await waitFor(() => {
+      expect(budgetApi.getBudgets).toHaveBeenCalled();
+    });
+
+    const requested = vi.mocked(budgetApi.getBudgets).mock.calls[0][0] as {
+      month: string;
+      pageSize: number;
+    };
+    expect(requested.pageSize).toBe(50);
+    expect(requested.month).toMatch(/^\d{4}-\d{2}$/);
   });
 });
 

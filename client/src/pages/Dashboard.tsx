@@ -194,7 +194,7 @@ export function Dashboard() {
     setBudgetsError(null);
 
     try {
-      const result = await budgetApi.getBudgets({ month: requestedMonth });
+      const result = await budgetApi.getBudgets({ month: requestedMonth, pageSize: 50 });
       if (requestId !== budgetsRequestRef.current) {
         return;
       }

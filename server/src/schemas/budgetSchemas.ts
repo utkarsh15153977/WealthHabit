@@ -50,6 +50,13 @@ export const listBudgetsSchema = z.object({
   query: z
     .object({
       month: budgetMonthSchema.optional(),
+      page: z.coerce.number().int().min(1, 'Page must be at least 1').optional(),
+      pageSize: z.coerce
+        .number()
+        .int()
+        .min(1, 'Page size must be at least 1')
+        .max(50, 'Page size must be at most 50')
+        .optional(),
     })
     .strict(),
 });

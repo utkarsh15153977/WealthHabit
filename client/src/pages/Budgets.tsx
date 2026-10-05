@@ -21,6 +21,7 @@ import type { BudgetWithProgress } from '../types/budget';
 const MONEY_PATTERN = /^\d+(\.\d{1,2})?$/;
 const MONEY_MAX = 9999999999999.99;
 const MONTH_PATTERN = /^\d{4}-(0[1-9]|1[0-2])$/;
+const PAGE_SIZE = 20;
 
 const budgetSchema = z
   .object({
@@ -89,6 +90,8 @@ function optionalCategoryId(categoryId: string | undefined): string | null {
 export function Budgets() {
 
   const [budgets, setBudgets] = useState<BudgetWithProgress[]>([]);
+  const [page, setPage] = useState(1);
+  const [total, setTotal] = useState(0);
   const [isLoading, setIsLoading] = useState(true);
   const [hasLoadedOnce, setHasLoadedOnce] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -119,6 +122,8 @@ export function Budgets() {
     () => categories.filter((category) => category.type === 'EXPENSE'),
     [categories]
   );
+
+  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
 
   const fetchProfileCurrency = useCallback(async () => {
     try {
@@ -152,8 +157,9 @@ export function Budgets() {
     setLoadError(null);
 
     try {
-      const result = await budgetApi.getBudgets();
+      const result = await budgetApi.getBudgets({ page, pageSize: PAGE_SIZE });
       setBudgets(result.budgets);
+      setTotal(result.total);
       setHasLoadedOnce(true);
     } catch (error) {
       if (initial || hasLoadedOnce) {
@@ -166,7 +172,7 @@ export function Budgets() {
         setIsFetching(false);
       }
     }
-  }, [hasLoadedOnce]);
+  }, [hasLoadedOnce, page]);
 
   useEffect(() => {
     void fetchProfileCurrency();
@@ -433,6 +439,30 @@ export function Budgets() {
           <p className="text-xs text-text-muted text-center mt-4" aria-live="polite">
             Refreshing budgets...
           </p>
+        )}
+
+        {!loadError && total > PAGE_SIZE && (
+          <div className="mt-6 flex items-center justify-between">
+            <button
+              type="button"
+              className="btn-secondary btn-sm"
+              onClick={() => setPage((value) => Math.max(1, value - 1))}
+              disabled={page <= 1 || isFetching}
+            >
+              Previous
+            </button>
+            <span className="text-sm text-text-muted" data-testid="budgets-page-indicator">
+              Page {page} of {totalPages}
+            </span>
+            <button
+              type="button"
+              className="btn-secondary btn-sm"
+              onClick={() => setPage((value) => Math.min(totalPages, value + 1))}
+              disabled={page >= totalPages || isFetching}
+            >
+              Next
+            </button>
+          </div>
         )}
       </main>
 

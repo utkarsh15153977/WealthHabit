@@ -4,7 +4,13 @@ import express from 'express';
 import cookieParser from 'cookie-parser';
 import { testPrisma, createTestUser } from './setup.js';
 import { hashPassword, authService } from '../src/services/authService.js';
-import { Role, AccountStatus, CategoryType, TransactionType } from '@prisma/client';
+import {
+  Prisma,
+  Role,
+  AccountStatus,
+  CategoryType,
+  TransactionType,
+} from '@prisma/client';
 import { errorHandler } from '../src/middleware/errorHandler.js';
 import categoryRoutes from '../src/routes/categoryRoutes.js';
 import transactionRoutes from '../src/routes/transactionRoutes.js';
@@ -815,5 +821,316 @@ describe('Budgets API', () => {
     expect(
       list.body.data.budgets.every((b: { userId: string }) => b.userId === userA.id)
     ).toBe(true);
+  });
+
+  // --- DB-001: list pagination ---
+
+  function listBudgets(token: string, query = '') {
+    return request(app)
+      .get(`/api/budgets${query}`)
+      .set('Authorization', `Bearer ${token}`);
+  }
+
+  it('paginates the budget list with correct totals and stable ordering', async () => {
+    await seedBudget(tokenA, { name: 'Alpha', amount: '100', month: '2026-09' });
+    await seedBudget(tokenA, { name: 'Beta', amount: '200', month: '2026-09' });
+    await seedBudget(tokenA, { name: 'Gamma', amount: '300', month: '2026-09' });
+
+    const firstPage = await listBudgets(tokenA, '?page=1&pageSize=2');
+    expect(firstPage.status).toBe(200);
+    expect(firstPage.body.data.budgets).toHaveLength(2);
+    expect(firstPage.body.data.page).toBe(1);
+    expect(firstPage.body.data.pageSize).toBe(2);
+    expect(firstPage.body.data.total).toBe(3);
+    expect(firstPage.body.data.budgets.map((b: { name: string }) => b.name)).toEqual([
+      'Gamma',
+      'Beta',
+    ]);
+
+    const secondPage = await listBudgets(tokenA, '?page=2&pageSize=2');
+    expect(secondPage.status).toBe(200);
+    expect(secondPage.body.data.budgets).toHaveLength(1);
+    expect(secondPage.body.data.page).toBe(2);
+    expect(secondPage.body.data.pageSize).toBe(2);
+    expect(secondPage.body.data.total).toBe(3);
+    expect(secondPage.body.data.budgets[0].name).toBe('Alpha');
+
+    const beyondLastPage = await listBudgets(tokenA, '?page=9&pageSize=2');
+    expect(beyondLastPage.status).toBe(200);
+    expect(beyondLastPage.body.data.budgets).toHaveLength(0);
+    expect(beyondLastPage.body.data.total).toBe(3);
+  });
+
+  it('keeps month DESC, createdAt DESC, id DESC ordering across pages', async () => {
+    await seedBudget(tokenA, { name: 'Aug Old', amount: '100', month: '2026-08' });
+    await seedBudget(tokenA, { name: 'Sep First', amount: '100', month: '2026-09' });
+    await seedBudget(tokenA, { name: 'Sep Second', amount: '100', month: '2026-09' });
+
+    const all = await listBudgets(tokenA, '?pageSize=50');
+    expect(all.body.data.budgets.map((b: { name: string }) => b.name)).toEqual([
+      'Sep Second',
+      'Sep First',
+      'Aug Old',
+    ]);
+
+    const firstPage = await listBudgets(tokenA, '?pageSize=2');
+    const secondPage = await listBudgets(tokenA, '?page=2&pageSize=2');
+    expect(
+      [...firstPage.body.data.budgets, ...secondPage.body.data.budgets].map(
+        (b: { name: string }) => b.name
+      )
+    ).toEqual(['Sep Second', 'Sep First', 'Aug Old']);
+  });
+
+  it('applies default pagination when no query parameters are supplied', async () => {
+    await seedBudget(tokenA, { name: 'Default One', amount: '100', month: '2026-09' });
+    await seedBudget(tokenA, { name: 'Default Two', amount: '100', month: '2026-09' });
+
+    const res = await listBudgets(tokenA);
+
+    expect(res.status).toBe(200);
+    expect(Array.isArray(res.body.data.budgets)).toBe(true);
+    expect(res.body.data.budgets).toHaveLength(2);
+    expect(res.body.data.page).toBe(1);
+    expect(res.body.data.pageSize).toBe(20);
+    expect(res.body.data.total).toBe(2);
+    expect(res.body.data.budgets[0].progress).toMatchObject({
+      budgetAmount: 100,
+      spent: 0,
+      remaining: 100,
+      percentageUsed: 0,
+      transactionCount: 0,
+    });
+  });
+
+  it('counts only the requested month in total when paginating by month', async () => {
+    await seedBudget(tokenA, { name: 'Sep A', amount: '100', month: '2026-09' });
+    await seedBudget(tokenA, { name: 'Sep B', amount: '100', month: '2026-09' });
+    await seedBudget(tokenA, { name: 'Aug A', amount: '100', month: '2026-08' });
+    await seedBudget(tokenA, { name: 'Jul A', amount: '100', month: '2026-07' });
+
+    const res = await listBudgets(tokenA, '?month=2026-09&pageSize=1');
+
+    expect(res.status).toBe(200);
+    expect(res.body.data.budgets).toHaveLength(1);
+    expect(res.body.data.budgets[0].month).toBe('2026-09');
+    expect(res.body.data.page).toBe(1);
+    expect(res.body.data.pageSize).toBe(1);
+    expect(res.body.data.total).toBe(2);
+  });
+
+  it('rejects invalid pagination query parameters', async () => {
+    const zeroPage = await listBudgets(tokenA, '?page=0');
+    expect(zeroPage.status).toBe(400);
+
+    const oversized = await listBudgets(tokenA, '?pageSize=51');
+    expect(oversized.status).toBe(400);
+
+    const notNumericSize = await listBudgets(tokenA, '?pageSize=abc');
+    expect(notNumericSize.status).toBe(400);
+
+    const notNumericPage = await listBudgets(tokenA, '?page=abc');
+    expect(notNumericPage.status).toBe(400);
+
+    const zeroPageSize = await listBudgets(tokenA, '?pageSize=0');
+    expect(zeroPageSize.status).toBe(400);
+
+    const fractional = await listBudgets(tokenA, '?pageSize=1.5');
+    expect(fractional.status).toBe(400);
+
+    const unknown = await listBudgets(tokenA, '?unexpected=1');
+    expect(unknown.status).toBe(400);
+  });
+
+  it('accepts the maximum page size boundary', async () => {
+    const res = await listBudgets(tokenA, '?pageSize=50');
+
+    expect(res.status).toBe(200);
+    expect(res.body.data.pageSize).toBe(50);
+  });
+
+  // --- DB-001: list progress must match the dedicated progress endpoint ---
+
+  it('returns list progress identical to the progress endpoint for every budget', async () => {
+    const sepFood = await seedBudget(tokenA, {
+      name: 'Sep Food',
+      amount: '100',
+      month: '2026-09',
+      categoryId: foodCatA,
+    });
+    const sepTransport = await seedBudget(tokenA, {
+      name: 'Sep Transport',
+      amount: '500',
+      month: '2026-09',
+      categoryId: transportCatA,
+    });
+    const sepOverall = await seedBudget(tokenA, {
+      name: 'Sep Overall',
+      amount: '1000',
+      month: '2026-09',
+    });
+    const sepMulti = await seedBudget(tokenA, {
+      name: 'Sep Multi',
+      amount: '1000',
+      month: '2026-09',
+      categoryId: foodCatA,
+    });
+    const sepSystem = await seedBudget(tokenA, {
+      name: 'Sep System',
+      amount: '200',
+      month: '2026-09',
+      categoryId: systemExpenseCat,
+    });
+    const augOverall = await seedBudget(tokenA, {
+      name: 'Aug Overall',
+      amount: '1000',
+      month: '2026-08',
+    });
+    const augFood = await seedBudget(tokenA, {
+      name: 'Aug Food',
+      amount: '1000',
+      month: '2026-08',
+      categoryId: foodCatA,
+    });
+
+    await testPrisma.budgetCategory.create({
+      data: {
+        budgetId: sepMulti,
+        categoryId: transportCatA,
+        allocatedAmount: new Prisma.Decimal('1000'),
+      },
+    });
+
+    await seedTx(userA.id, foodCatA, TransactionType.EXPENSE, '150.00', '2026-09-05T10:00:00.000Z');
+    await seedTx(userA.id, foodCatA, TransactionType.EXPENSE, '10.00', '2026-09-30T23:59:59.999Z');
+    await seedTx(userA.id, foodCatA, TransactionType.EXPENSE, '999.00', '2026-10-01T00:00:00.000Z');
+    await seedTx(userA.id, foodCatA, TransactionType.EXPENSE, '5.00', '2026-08-31T23:59:00.000Z');
+    await seedTx(userA.id, transportCatA, TransactionType.EXPENSE, '50.00', '2026-09-11T08:00:00.000Z');
+    await seedTx(userA.id, systemExpenseCat, TransactionType.EXPENSE, '75.25', '2026-09-12T08:00:00.000Z');
+    await seedTx(userA.id, salaryCatA, TransactionType.INCOME, '5000.00', '2026-09-01T12:00:00.000Z');
+    await seedTx(userA.id, foodCatA, TransactionType.EXPENSE, '200.00', '2026-08-15T08:00:00.000Z');
+    await seedTx(userA.id, transportCatA, TransactionType.EXPENSE, '25.00', '2026-08-16T08:00:00.000Z');
+    await seedTx(userA.id, salaryCatA, TransactionType.INCOME, '3000.00', '2026-08-01T12:00:00.000Z');
+    await seedTx(userB.id, foodCatB, TransactionType.EXPENSE, '4000.00', '2026-09-20T08:00:00.000Z');
+
+    const list = await listBudgets(tokenA, '?pageSize=50');
+    expect(list.status).toBe(200);
+    expect(list.body.data.total).toBe(7);
+    expect(list.body.data.budgets).toHaveLength(7);
+
+    const listed = list.body.data.budgets as Array<{
+      id: string;
+      name: string;
+      progress: Record<string, unknown>;
+    }>;
+    expect(listed.every((budget) => budget.progress !== undefined)).toBe(true);
+
+    const budgetIds = [
+      sepFood,
+      sepTransport,
+      sepOverall,
+      sepMulti,
+      sepSystem,
+      augOverall,
+      augFood,
+    ];
+
+    for (const id of budgetIds) {
+      const progressRes = await getProgress(tokenA, id);
+      expect(progressRes.status).toBe(200);
+
+      const fromList = listed.find((budget) => budget.id === id);
+      expect(fromList).toBeDefined();
+      expect(fromList?.progress).toEqual(progressRes.body.data.progress);
+    }
+
+    const byName = new Map(listed.map((budget) => [budget.name, budget.progress]));
+
+    expect(byName.get('Sep Food')).toMatchObject({
+      budgetAmount: 100,
+      spent: 160,
+      remaining: -60,
+      percentageUsed: 160,
+      transactionCount: 2,
+      periodStart: '2026-09-01T00:00:00.000Z',
+      periodEnd: '2026-10-01T00:00:00.000Z',
+    });
+
+    expect(byName.get('Sep Transport')).toMatchObject({
+      spent: 50,
+      remaining: 450,
+      percentageUsed: 10,
+      transactionCount: 1,
+    });
+
+    expect(byName.get('Sep Overall')).toMatchObject({
+      budgetAmount: 1000,
+      spent: 285.25,
+      remaining: 714.75,
+      percentageUsed: 28.53,
+      transactionCount: 4,
+    });
+    expect(byName.get('Sep Overall')?.category).toBeNull();
+
+    expect(byName.get('Sep Multi')).toMatchObject({
+      budgetAmount: 1000,
+      spent: 210,
+      remaining: 790,
+      percentageUsed: 21,
+      transactionCount: 3,
+    });
+    expect([foodCatA, transportCatA]).toContain(byName.get('Sep Multi')?.category?.id);
+
+    expect(byName.get('Sep System')).toMatchObject({
+      budgetAmount: 200,
+      spent: 75.25,
+      remaining: 124.75,
+      percentageUsed: 37.63,
+      transactionCount: 1,
+    });
+    expect(byName.get('Sep System')?.category).toMatchObject({
+      id: systemExpenseCat,
+      isDefault: true,
+    });
+
+    expect(byName.get('Aug Overall')).toMatchObject({
+      budgetAmount: 1000,
+      spent: 230,
+      remaining: 770,
+      percentageUsed: 23,
+      transactionCount: 3,
+      periodStart: '2026-08-01T00:00:00.000Z',
+      periodEnd: '2026-09-01T00:00:00.000Z',
+    });
+
+    expect(byName.get('Aug Food')).toMatchObject({
+      budgetAmount: 1000,
+      spent: 205,
+      remaining: 795,
+      percentageUsed: 20.5,
+      transactionCount: 2,
+    });
+  });
+
+  it('keeps list progress consistent with the progress endpoint across pages', async () => {
+    await seedBudget(tokenA, { name: 'Page One', amount: '100', month: '2026-10', categoryId: foodCatA });
+    await seedBudget(tokenA, { name: 'Page Two', amount: '100', month: '2026-11', categoryId: transportCatA });
+    await seedBudget(tokenA, { name: 'Page Three', amount: '100', month: '2026-12' });
+
+    await seedTx(userA.id, foodCatA, TransactionType.EXPENSE, '60.00', '2026-10-05T00:00:00.000Z');
+    await seedTx(userA.id, transportCatA, TransactionType.EXPENSE, '30.00', '2026-11-05T00:00:00.000Z');
+    await seedTx(userA.id, foodCatA, TransactionType.EXPENSE, '20.00', '2026-12-05T00:00:00.000Z');
+
+    for (const page of [1, 2, 3]) {
+      const list = await listBudgets(tokenA, `?page=${page}&pageSize=1`);
+      expect(list.status).toBe(200);
+      expect(list.body.data.total).toBe(3);
+      expect(list.body.data.budgets).toHaveLength(1);
+
+      const budget = list.body.data.budgets[0];
+      const progressRes = await getProgress(tokenA, budget.id);
+      expect(progressRes.status).toBe(200);
+      expect(budget.progress).toEqual(progressRes.body.data.progress);
+    }
   });
 });

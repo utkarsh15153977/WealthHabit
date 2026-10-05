@@ -22,6 +22,8 @@ function unwrapData<T>(payload: ApiResponse<T>): T {
 export async function getBudgets(params: BudgetListParams = {}): Promise<BudgetListResponse> {
   const query: Record<string, string> = {};
   if (params.month) query.month = params.month;
+  if (params.page !== undefined) query.page = String(params.page);
+  if (params.pageSize !== undefined) query.pageSize = String(params.pageSize);
 
   const response = await api.get<ApiResponse<BudgetListResponse>>('/budgets', {
     params: Object.keys(query).length > 0 ? query : undefined,

@@ -37,6 +37,9 @@ export interface BudgetWithProgress extends Budget {
 
 export interface BudgetListResponse {
   budgets: BudgetWithProgress[];
+  page: number;
+  pageSize: number;
+  total: number;
 }
 
 export interface BudgetResponse {
@@ -67,4 +70,6 @@ export interface UpdateBudgetRequest {
 
 export interface BudgetListParams {
   month?: string;
+  page?: number;
+  pageSize?: number;
 }
