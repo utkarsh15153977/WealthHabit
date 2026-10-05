@@ -7,6 +7,10 @@ export const AuditActions = {
   ADMIN_CHALLENGE_CREATED: 'ADMIN_CHALLENGE_CREATED',
   ADMIN_CHALLENGE_UPDATED: 'ADMIN_CHALLENGE_UPDATED',
   ADMIN_CHALLENGE_DELETED: 'ADMIN_CHALLENGE_DELETED',
+  EMAIL_VERIFICATION_SENT: 'EMAIL_VERIFICATION_SENT',
+  EMAIL_VERIFICATION_RESENT: 'EMAIL_VERIFICATION_RESENT',
+  EMAIL_VERIFIED: 'EMAIL_VERIFIED',
+  EMAIL_VERIFICATION_FAILED: 'EMAIL_VERIFICATION_FAILED',
 } as const;
 
 export type AuditAction = (typeof AuditActions)[keyof typeof AuditActions];
@@ -22,9 +26,12 @@ export interface AuditEventInput {
 }
 
 /**
- * Minimal audit-log writer used by admin user management and admin
- * challenge administration. Reading never writes (no audit-of-audit).
- * Never pass credentials, tokens or secrets as metadata.
+ * Minimal audit-log writer used by admin user management, admin
+ * challenge administration and the email-verification flow. Reading never
+ * writes (no audit-of-audit). Never pass credentials, tokens or secrets as
+ * metadata — note that the admin read API additionally drops any metadata key
+ * matching `password|secret|token|hash|…`, so such a field would silently
+ * vanish from the audit UI.
  */
 export async function recordAuditEvent(
   event: AuditEventInput,

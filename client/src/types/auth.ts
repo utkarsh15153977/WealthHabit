@@ -9,6 +9,8 @@ export interface User {
   lastName: string;
   role: Role;
   status: AccountStatus;
+  /** Whether the email address has been confirmed. False right after registration. */
+  emailVerified: boolean;
 }
 
 export interface LoginRequest {
@@ -26,6 +28,17 @@ export interface RegisterRequest {
 export interface AuthResponse {
   user: User;
   accessToken: string;
+  /** Present on registration only: a verification email has been sent. */
+  message?: string;
+}
+
+export interface VerifyEmailResponse {
+  message: string;
+  emailVerified: boolean;
+}
+
+export interface ResendVerificationResponse {
+  message: string;
 }
 
 export interface RefreshResponse {

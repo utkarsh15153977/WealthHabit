@@ -2,6 +2,8 @@ import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
   ArrowLeft,
+  CheckCircle2,
+  MailWarning,
   Settings,
   User,
 } from 'lucide-react';
@@ -176,6 +178,25 @@ export function Profile() {
                   <div className="min-w-0">
                     <p className="font-medium text-text truncate">{profile.firstName} {profile.lastName}</p>
                     <p className="text-sm text-text-muted truncate">{profile.email}</p>
+                    {user?.emailVerified === false && (
+                      <Link
+                        to="/verify-email"
+                        className="text-xs text-primary hover:underline font-medium inline-flex items-center gap-1 mt-1"
+                        data-testid="profile-email-unverified"
+                      >
+                        <MailWarning className="w-3 h-3" aria-hidden="true" />
+                        Email not verified — finish setup
+                      </Link>
+                    )}
+                    {user?.emailVerified === true && (
+                      <span
+                        className="text-xs text-success font-medium inline-flex items-center gap-1 mt-1"
+                        data-testid="profile-email-verified"
+                      >
+                        <CheckCircle2 className="w-3 h-3" aria-hidden="true" />
+                        Email verified
+                      </span>
+                    )}
                   </div>
                   <span className="badge badge-primary ml-auto">{profile.role}</span>
                 </div>

@@ -100,6 +100,7 @@ function toAuthenticatedUser(user: {
   lastName: string;
   role: Role;
   status: AccountStatus;
+  emailVerifiedAt: Date | null;
 }): AuthenticatedUser {
   return {
     id: user.id,
@@ -108,6 +109,7 @@ function toAuthenticatedUser(user: {
     lastName: user.lastName,
     role: user.role,
     status: user.status,
+    emailVerified: user.emailVerifiedAt !== null,
   };
 }
 

@@ -15,7 +15,18 @@ let authFailureListeners: (() => void)[] = [];
 
 type RetryableConfig = InternalAxiosRequestConfig & { _retry?: boolean };
 
-const NO_REFRESH_URLS = ['/auth/refresh', '/auth/login', '/auth/register', '/auth/logout'];
+const NO_REFRESH_URLS = [
+  '/auth/refresh',
+  '/auth/login',
+  '/auth/register',
+  '/auth/logout',
+  // Both are reached without a session (the token or the address is the
+  // credential) and legitimately answer 400 when a link is stale. Attempting a
+  // token refresh there would be pointless and would clear the access token of
+  // a perfectly healthy session as a side effect.
+  '/auth/verify-email',
+  '/auth/resend-verification',
+];
 
 export function getAccessToken(): string | null {
   return accessToken;
