@@ -34,25 +34,30 @@ export async function listUserSubscriptions(
   userId: string,
   query?: ListSubscriptionsQuery
 ): Promise<SubscriptionWithCategory[]> {
-  const where: Prisma.SubscriptionWhereInput = { userId };
+  const and: Prisma.SubscriptionWhereInput[] = [{ userId }];
 
+  // `status` and `active` are independent filters that constrain the same
+  // column, so they are combined with AND rather than assigned one after the
+  // other. Assigning `where.status` twice let `active` silently discard an
+  // explicit `status` (for example status=ACTIVE&active=false returned every
+  // non-active subscription instead of nothing).
   if (query?.status) {
-    where.status = query.status;
+    and.push({ status: query.status });
   }
 
   if (query?.active === 'true') {
-    where.status = 'ACTIVE';
+    and.push({ status: 'ACTIVE' });
   } else if (query?.active === 'false') {
-    where.status = { not: 'ACTIVE' };
+    and.push({ status: { not: 'ACTIVE' } });
   }
 
   if (query?.month) {
     const { start, end } = monthBounds(query.month);
-    where.nextRenewalDate = { gte: start, lt: end };
+    and.push({ nextRenewalDate: { gte: start, lt: end } });
   }
 
   return prisma.subscription.findMany({
-    where,
+    where: { AND: and },
     include: { category: true },
     orderBy: { nextRenewalDate: 'asc' },
   });

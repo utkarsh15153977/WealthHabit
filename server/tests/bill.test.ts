@@ -434,6 +434,137 @@ describe('Bills API', () => {
     expect(inactive.body.data.bills[0].name).toBe('Cancelled bill');
   });
 
+  // FIN-001: `status` and `active` constrain the same column and must be
+  // combined, never overwritten.
+
+  it('intersects an explicit status with active=true', async () => {
+    await createBill({ name: 'Pending bill' });
+    await createBill({ name: 'Paid bill', status: 'PAID' });
+    const cancelledId = await createBill({ name: 'Cancelled bill' });
+    await patchBill(cancelledId, { status: 'CANCELLED' }).expect(200);
+
+    const res = await request(app)
+      .get('/api/bills?status=PAID&active=true')
+      .set('Authorization', `Bearer ${tokenA}`)
+      .expect(200);
+
+    // Before the fix `active=true` overwrote status=PAID and returned both
+    // non-cancelled bills.
+    expect(res.body.data.bills).toHaveLength(1);
+    expect(res.body.data.bills[0].name).toBe('Paid bill');
+  });
+
+  it('returns nothing for status=CANCELLED with active=true', async () => {
+    await createBill({ name: 'Pending bill' });
+    await createBill({ name: 'Paid bill', status: 'PAID' });
+    const cancelledId = await createBill({ name: 'Cancelled bill' });
+    await patchBill(cancelledId, { status: 'CANCELLED' }).expect(200);
+
+    const res = await request(app)
+      .get('/api/bills?status=CANCELLED&active=true')
+      .set('Authorization', `Bearer ${tokenA}`)
+      .expect(200);
+
+    // Contradictory predicates must intersect to an empty set. Before the fix
+    // this returned the two non-cancelled bills.
+    expect(res.body.data.bills).toHaveLength(0);
+  });
+
+  it('returns cancelled bills for status=CANCELLED with active=false', async () => {
+    await createBill({ name: 'Pending bill' });
+    await createBill({ name: 'Paid bill', status: 'PAID' });
+    const cancelledId = await createBill({ name: 'Cancelled bill' });
+    await patchBill(cancelledId, { status: 'CANCELLED' }).expect(200);
+
+    const res = await request(app)
+      .get('/api/bills?status=CANCELLED&active=false')
+      .set('Authorization', `Bearer ${tokenA}`)
+      .expect(200);
+
+    // The two filters agree, so the result is unchanged by the fix.
+    expect(res.body.data.bills).toHaveLength(1);
+    expect(res.body.data.bills[0].name).toBe('Cancelled bill');
+  });
+
+  it('returns nothing for status=PAID with active=false', async () => {
+    await createBill({ name: 'Paid bill', status: 'PAID' });
+    const cancelledId = await createBill({ name: 'Cancelled bill' });
+    await patchBill(cancelledId, { status: 'CANCELLED' }).expect(200);
+
+    const res = await request(app)
+      .get('/api/bills?status=PAID&active=false')
+      .set('Authorization', `Bearer ${tokenA}`)
+      .expect(200);
+
+    // Before the fix this returned the cancelled bill.
+    expect(res.body.data.bills).toHaveLength(0);
+  });
+
+  it('keeps user isolation when both filters are combined', async () => {
+    await createBill({ name: 'A pending bill' });
+
+    const b = createTestUser();
+    const createdB = await testPrisma.user.create({
+      data: {
+        email: b.email,
+        passwordHash: await hashPassword(b.password),
+        firstName: b.firstName,
+        lastName: b.lastName,
+        role: Role.USER,
+        status: AccountStatus.ACTIVE,
+      },
+    });
+    const otherToken = authService.generateAccessToken({
+      id: createdB.id,
+      role: createdB.role,
+    });
+
+    const created = await request(app)
+      .post('/api/bills')
+      .set('Authorization', `Bearer ${otherToken}`)
+      .send(createBillPayload({ name: 'Other cancelled bill' }))
+      .expect(201);
+    await request(app)
+      .patch(`/api/bills/${created.body.data.bill.id}`)
+      .set('Authorization', `Bearer ${otherToken}`)
+      .send({ status: 'CANCELLED' })
+      .expect(200);
+
+    const listB = await request(app)
+      .get('/api/bills?status=CANCELLED&active=false')
+      .set('Authorization', `Bearer ${otherToken}`)
+      .expect(200);
+    expect(listB.body.data.bills).toHaveLength(1);
+    expect(listB.body.data.bills[0].name).toBe('Other cancelled bill');
+
+    // The same combined query for A must not see B's bill.
+    const listA = await request(app)
+      .get('/api/bills?status=CANCELLED&active=false')
+      .set('Authorization', `Bearer ${tokenA}`)
+      .expect(200);
+    expect(listA.body.data.bills).toHaveLength(0);
+  });
+
+  it('combines both filters with the month window', async () => {
+    const inWindow = daysFromToday(3);
+    await createBill({ name: 'Paid in window', dueDate: toIsoDay(inWindow), status: 'PAID' });
+    await createBill({
+      name: 'Paid out of window',
+      dueDate: toIsoDay(daysFromToday(400)),
+      status: 'PAID',
+    });
+
+    const monthKey = toIsoDay(inWindow).slice(0, 7);
+    const res = await request(app)
+      .get(`/api/bills?status=PAID&active=true&month=${monthKey}`)
+      .set('Authorization', `Bearer ${tokenA}`)
+      .expect(200);
+
+    // All three filters must apply together.
+    expect(res.body.data.bills).toHaveLength(1);
+    expect(res.body.data.bills[0].name).toBe('Paid in window');
+  });
+
   // ---------------------------------------------------------------
   // Due state (derived, never persisted)
   // --------------------------------------------------------------

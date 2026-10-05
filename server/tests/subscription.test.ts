@@ -428,6 +428,142 @@ describe('Subscriptions API', () => {
     expect(inactive.body.data.subscriptions[0].name).toBe('Paused sub');
   });
 
+  // FIN-001: `status` and `active` constrain the same column and must be
+  // combined, never overwritten.
+
+  it('intersects an explicit status with active=false', async () => {
+    await createSubscription({ name: 'Active sub' });
+    const pausedId = await createSubscription({ name: 'Paused sub' });
+    await patchSubscription(pausedId, { status: 'PAUSED' }).expect(200);
+
+    const res = await request(app)
+      .get('/api/subscriptions?status=PAUSED&active=false')
+      .set('Authorization', `Bearer ${tokenA}`)
+      .expect(200);
+
+    // Before the fix `active=false` overwrote status=PAUSED and returned the
+    // active subscription as well.
+    expect(res.body.data.subscriptions).toHaveLength(1);
+    expect(res.body.data.subscriptions[0].name).toBe('Paused sub');
+  });
+
+  it('returns nothing for status=ACTIVE with active=false', async () => {
+    await createSubscription({ name: 'Active sub' });
+    const pausedId = await createSubscription({ name: 'Paused sub' });
+    await patchSubscription(pausedId, { status: 'PAUSED' }).expect(200);
+
+    const res = await request(app)
+      .get('/api/subscriptions?status=ACTIVE&active=false')
+      .set('Authorization', `Bearer ${tokenA}`)
+      .expect(200);
+
+    // Contradictory predicates must intersect to an empty set. Before the fix
+    // this returned the paused subscription.
+    expect(res.body.data.subscriptions).toHaveLength(0);
+  });
+
+  it('returns cancelled subscriptions for status=CANCELLED with active=false', async () => {
+    await createSubscription({ name: 'Active sub' });
+    const cancelledId = await createSubscription({ name: 'Cancelled sub' });
+    await patchSubscription(cancelledId, { status: 'CANCELLED' }).expect(200);
+
+    const res = await request(app)
+      .get('/api/subscriptions?status=CANCELLED&active=false')
+      .set('Authorization', `Bearer ${tokenA}`)
+      .expect(200);
+
+    // The two filters agree, so the result is unchanged by the fix.
+    expect(res.body.data.subscriptions).toHaveLength(1);
+    expect(res.body.data.subscriptions[0].name).toBe('Cancelled sub');
+  });
+
+  it('returns nothing for status=PAUSED with active=true', async () => {
+    await createSubscription({ name: 'Active sub' });
+    const pausedId = await createSubscription({ name: 'Paused sub' });
+    await patchSubscription(pausedId, { status: 'PAUSED' }).expect(200);
+
+    const res = await request(app)
+      .get('/api/subscriptions?status=PAUSED&active=true')
+      .set('Authorization', `Bearer ${tokenA}`)
+      .expect(200);
+
+    // Before the fix this returned the active subscription.
+    expect(res.body.data.subscriptions).toHaveLength(0);
+  });
+
+  it('keeps user isolation when both filters are combined', async () => {
+    await createSubscription({ name: 'A active sub' });
+
+    const b = createTestUser();
+    const createdB = await testPrisma.user.create({
+      data: {
+        email: b.email,
+        passwordHash: await hashPassword(b.password),
+        firstName: b.firstName,
+        lastName: b.lastName,
+        role: Role.USER,
+        status: AccountStatus.ACTIVE,
+      },
+    });
+    const otherToken = authService.generateAccessToken({
+      id: createdB.id,
+      role: createdB.role,
+    });
+
+    const created = await request(app)
+      .post('/api/subscriptions')
+      .set('Authorization', `Bearer ${otherToken}`)
+      .send(createSubscriptionPayload({ name: 'Other paused sub' }))
+      .expect(201);
+    await request(app)
+      .patch(`/api/subscriptions/${created.body.data.subscription.id}`)
+      .set('Authorization', `Bearer ${otherToken}`)
+      .send({ status: 'PAUSED' })
+      .expect(200);
+
+    const listB = await request(app)
+      .get('/api/subscriptions?status=PAUSED&active=false')
+      .set('Authorization', `Bearer ${otherToken}`)
+      .expect(200);
+    expect(listB.body.data.subscriptions).toHaveLength(1);
+    expect(listB.body.data.subscriptions[0].name).toBe('Other paused sub');
+
+    // The same combined query for A must not see B's subscription.
+    const listA = await request(app)
+      .get('/api/subscriptions?status=PAUSED&active=false')
+      .set('Authorization', `Bearer ${tokenA}`)
+      .expect(200);
+    expect(listA.body.data.subscriptions).toHaveLength(0);
+  });
+
+  it('combines both filters with the month window', async () => {
+    const inWindow = daysFromToday(2);
+    await patchSubscription(
+      await createSubscription({
+        name: 'Paused in window',
+        nextRenewalDate: toIsoDay(inWindow),
+      }),
+      { status: 'PAUSED' }
+    ).expect(200);
+    await patchSubscription(
+      await createSubscription({
+        name: 'Paused out of window',
+        nextRenewalDate: toIsoDay(daysFromToday(500)),
+      }),
+      { status: 'PAUSED' }
+    ).expect(200);
+
+    const monthKey = toIsoDay(inWindow).slice(0, 7);
+    const res = await request(app)
+      .get(`/api/subscriptions?status=PAUSED&active=false&month=${monthKey}`)
+      .set('Authorization', `Bearer ${tokenA}`)
+      .expect(200);
+
+    // All three filters must apply together.
+    expect(res.body.data.subscriptions).toHaveLength(1);
+    expect(res.body.data.subscriptions[0].name).toBe('Paused in window');
+  });
+
   // ---------------------------------------------------------------
   // Due state (derived, never persisted)
   // --------------------------------------------------------------
