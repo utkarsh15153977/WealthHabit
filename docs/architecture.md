@@ -1163,6 +1163,166 @@ Automated `prisma migrate deploy` as a deployment step, CI/CD image publishing,
 Kubernetes/Terraform, a shared rate-limit store and TLS termination are all
 later milestones; nothing cloud-specific was added here.
 
+## Email Verification
+
+### Goal and non-goals
+
+Registration creates an account that starts **unverified**
+(`users.emailVerifiedAt IS NULL`) and emails a single-use link. Following the
+link sets `emailVerifiedAt`.
+
+Deliberately **not** in scope: gating login, sessions or any API on
+`emailVerified`. The account is fully usable immediately; verification is a
+data-quality and deliverability signal, and the field is reported to the client
+(`User.emailVerified`) but authorises nothing. Tightening this later is a
+separate, explicitly reviewed change.
+
+No Prisma migration was needed: `emailVerifiedAt` and the `EMAIL_VERIFICATION`
+member of `AuthTokenType` already existed.
+
+### Token lifecycle
+
+- **Material**: 32 bytes from `randomBytes`, hex-encoded (64 characters). Only
+  the SHA-256 hash is stored; the raw value exists in the emailed URL and in the
+  request body of the verify call, nowhere else.
+- **Expiry**: `EMAIL_VERIFICATION_TOKEN_TTL_MINUTES` (default 1440 = 24 hours).
+- **Single use**: consumption is one conditional
+  `UPDATE ... SET usedAt = now() WHERE tokenHash = $1 AND type = 'EMAIL_VERIFICATION' AND usedAt IS NULL AND expiresAt > now() RETURNING id, userId`.
+  Concurrent callers race on that predicate, so the database — not application
+  code — picks exactly one winner (the same DB-002 pattern as refresh rotation).
+  A five-way race is covered in `server/tests/emailVerificationConcurrency.test.ts`.
+- **Superseding**: a resend revokes every outstanding verification token for the
+  account before minting a new one, so an account never holds more than one live
+  link.
+- **Postgres parameter typing**: the statement casts the type with
+  `${type}::"AuthTokenType"`, as the existing token code does.
+
+### Endpoints
+
+| Route | Auth | Body | Success |
+| --- | --- | --- | --- |
+| `POST /api/auth/verify-email` | none (the token *is* the credential) | `{ token }` | `{ message, emailVerified: true }` |
+| `POST /api/auth/resend-verification` | none | `{ email }` | `{ message }` |
+
+Both are `POST` with a strict (`z.object(...).strict()`) body. Verification is
+deliberately **not** a `GET /verify-email?token=…`: a token in a URL is written
+to morgan's access log and every proxy log on the way, so the token travels in
+the body and the browser only reads it from the emailed link.
+
+### Atomicity
+
+Verification runs in one transaction: consume the token, stamp
+`emailVerifiedAt`, write the `EMAIL_VERIFIED` audit row. The `user.updateMany`
+is a compare-and-set on `emailVerifiedAt IS NULL`, so a replay cannot re-stamp
+the timestamp or double-write the audit event. "Token consumed" and "email
+verified" therefore can never disagree, even if the request dies mid-flight.
+
+### Concurrency on issuance
+
+Two resends could otherwise both observe "no recent token" and both mint a live
+token, defeating the cooldown. Issuance takes `SELECT ... FOR UPDATE` on the
+`users` row first; the second transaction re-reads the freshly inserted token and
+is refused. The lock only ever precedes inserts into `auth_tokens` and
+`audit_logs`, so no lock-ordering cycle is introduced (same idiom as
+`adminUserService`).
+
+A related trap is documented on `createEmailVerificationToken`: inserting an
+`auth_tokens` row takes a `FOR KEY SHARE` lock for the foreign-key check, which
+**conflicts** with the caller's own `FOR UPDATE`. Writing that insert through a
+second connection self-deadlocks until the transaction times out, so the insert
+must go through the transaction client.
+
+### Anti-enumeration
+
+`POST /api/auth/resend-verification` returns the same status and byte-identical
+body for a real unverified account, an already verified account, a suppressed
+cooldown, a delivery failure and an address that does not exist:
+
+> If your account requires verification, a verification email has been sent.
+
+`POST /api/auth/verify-email` answers unknown, malformed, expired, already-used,
+wrong-type and another user's token with one message:
+
+> This verification link is invalid or has expired. (`EMAIL_VERIFICATION_INVALID`)
+
+Rejection classification exists for the audit log only and never changes the
+response.
+
+### Abuse control
+
+| Control | Scope | Value |
+| --- | --- | --- |
+| `resendVerificationRateLimit` | normalized email + trusted client IP | 20 dev / 5 prod per 15 min |
+| `authRateLimit` | client IP | 100 dev / 20 prod per 15 min |
+| Per-account cooldown | database-backed | 60 s (`EMAIL_VERIFICATION_RESEND_COOLDOWN_SECONDS`) |
+
+The email-keyed limiter is mounted **before** schema validation and before any
+account lookup, so its budget is spent identically whether or not the address
+exists and a 429 can never distinguish a real account from a guess.
+`verify-email` gets no per-account limiter on purpose: it is keyed by an
+unguessable single-use token, so an account bucket would only let one attacker
+lock a victim out of verifying their own address.
+
+The in-memory limiter counters are process-local (see
+[Trust Proxy & Rate-Limit Trust Boundary](#trust-proxy--rate-limit-trust-boundary-phase-5g-2b));
+the cooldown is durable because it is derived from `auth_tokens.createdAt`.
+
+### Audit trail
+
+| Action | Actor | Notes |
+| --- | --- | --- |
+| `EMAIL_VERIFICATION_SENT` | the user | after registration |
+| `EMAIL_VERIFICATION_RESENT` | the user | after a successful resend |
+| `EMAIL_VERIFIED` | the user | in the verification transaction |
+| `EMAIL_VERIFICATION_FAILED` | `null` | only for tokens that name a real row |
+
+An unknown token writes **no** audit row, so an unauthenticated caller cannot
+turn the endpoint into an unbounded audit-log write amplifier. Metadata carries
+only `targetUserId`, `ttlMinutes`, `expiresAt` and `supersededLinks`; key names
+avoid the audit read-sanitizer's `…token…` pattern, and no raw token, hash or
+link is ever stored.
+
+### Delivery
+
+`server/src/services/emailService.ts` defines an `EmailTransport` interface with
+two implementations selected by `EMAIL_TRANSPORT`:
+
+- `memory` (default) — bounded in-process ring buffer, oldest first, delivers
+  nothing. Development and tests only; start-up warns if production selects it.
+  Bodies are never logged, because they contain the live token.
+- `webhook` — POSTs the rendered message as JSON to `EMAIL_WEBHOOK_URL` with an
+  optional bearer `EMAIL_WEBHOOK_TOKEN`, and applies its own timeout. A non-2xx
+  response is a delivery failure.
+
+Delivery failures are reported, never thrown: the token is already committed, so
+a provider outage must not turn a valid registration into a 500 or roll back a
+real account. The accepted consequence is a committed-but-undelivered token —
+inert (single use, expiring) and recoverable through the resend endpoint.
+
+The email carries a text and an HTML body, one branded call-to-action link,
+single-use and expiry wording, a copy-the-link fallback, a "ignore this email"
+line for unexpected recipients, and HTML-escaped recipient input.
+
+**Deployment dependency**: no real provider is wired in. Production needs a
+transport, a sender domain with SPF/DKIM/DMARC, and credentials. See
+`server/.env.production.example`.
+
+### Client flow
+
+- `/verify-email` is a public route that is deliberately **not** wrapped in
+  `GuestRoute`: registration signs the user in and then navigates there, so
+  GuestRoute would bounce them straight back to the dashboard. It is reachable
+  with or without a session because the link token is the credential.
+- States handled: loading, verified, invalid link, missing token. A resend form
+  with a client-side 60-second cooldown mirrors the server policy; the server
+  remains the authority.
+- Registration redirects to `/verify-email`. The address is never placed in the
+  URL (browser history and referrers).
+- `Profile` shows a verified/unverified badge and links to the resend flow.
+- Both endpoints are listed in `NO_REFRESH_URLS`: they are reached without a
+  session and legitimately answer 400 when a link is stale, so attempting a
+  token refresh would be pointless and would clear a healthy access token.
+
 ## Design Principles
 
 - Separation of concerns

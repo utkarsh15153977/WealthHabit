@@ -55,7 +55,12 @@ export function Register() {
         email: data.email,
         password: data.password,
       });
-      navigate('/dashboard', { replace: true });
+      // Land on the verification step instead of the dashboard: the account is
+      // usable right away (verification gates nothing yet), but the freshly
+      // minted single-use link is only visible there, and the user has no copy
+      // of it. The address is deliberately not put in the URL — it would then
+      // sit in browser history and any referrer header.
+      navigate('/verify-email', { replace: true });
     } catch (error) {
       setServerError(getApiErrorMessage(error));
     }

@@ -9,6 +9,9 @@ import { AppLayout } from '../components/layout/AppLayout';
 const Home = lazy(() => import('../pages/Home').then((m) => ({ default: m.Home })));
 const Login = lazy(() => import('../pages/Login').then((m) => ({ default: m.Login })));
 const Register = lazy(() => import('../pages/Register').then((m) => ({ default: m.Register })));
+const VerifyEmail = lazy(() =>
+  import('../pages/VerifyEmail').then((m) => ({ default: m.VerifyEmail }))
+);
 const Dashboard = lazy(() => import('../pages/Dashboard').then((m) => ({ default: m.Dashboard })));
 const Profile = lazy(() => import('../pages/Profile').then((m) => ({ default: m.Profile })));
 const Transactions = lazy(() =>
@@ -80,6 +83,15 @@ export const routes: RouteObject[] = [
         {createElement(WithSuspense(Register))}
       </GuestRoute>
     ),
+  },
+{
+    path: '/verify-email',
+    // Deliberately NOT wrapped in GuestRoute. Registration signs the new user in
+    // and then sends them here, so GuestRoute would immediately bounce them back
+    // to /dashboard and the confirmation step would never be seen. The page is
+    // reachable with or without a session, because the token in the link is the
+    // credential rather than the cookie.
+    element: createElement(WithSuspense(VerifyEmail)),
   },
   {
     path: '/dashboard',
@@ -243,7 +255,10 @@ export const routes: RouteObject[] = [
   },
 ];
 
-export const publicRoutes = ['/', '/login', '/register'];
+// Reachable without a session, but not exclusively: `/verify-email` is listed
+// here because an anonymous visitor following the emailed link must get through,
+// not because it is guest-only.
+export const publicRoutes = ['/', '/login', '/register', '/verify-email'];
 export const protectedRoutes = [
   '/dashboard',
   '/profile',

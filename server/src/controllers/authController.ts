@@ -1,8 +1,17 @@
 import { Response } from 'express';
 import { env } from '../config/index.js';
 import { AuthenticatedRequest } from '../middleware/authMiddleware.js';
-import { RegisterInput, LoginInput } from '../schemas/authSchemas.js';
+import {
+  RegisterInput,
+  LoginInput,
+  ResendVerificationInput,
+  VerifyEmailInput,
+} from '../schemas/authSchemas.js';
 import { authService } from '../services/authService.js';
+import {
+  emailVerificationMessages,
+  emailVerificationService,
+} from '../services/emailVerificationService.js';
 import {
   findUserByEmail,
   createUserWithProfile,
@@ -18,7 +27,15 @@ import {
 } from '../services/prismaAuthService.js';
 import { AppError } from '../utils/errors.js';
 import { AuthErrorCodes } from '../types/auth.js';
-import { RegisterData, LoginData, RefreshData, MeData, LogoutData } from '../types/auth.js';
+import {
+  RegisterData,
+  LoginData,
+  RefreshData,
+  MeData,
+  LogoutData,
+  ResendVerificationData,
+  VerifyEmailData,
+} from '../types/auth.js';
 
 export async function register(
   req: AuthenticatedRequest,
@@ -40,6 +57,19 @@ export async function register(
     input.lastName
   );
 
+  // The account is created unverified (`emailVerifiedAt` is null by default) and
+  // its first single-use link is issued here. This is deliberately a separate
+  // step from `createUserWithProfile` rather than an extra statement inside that
+  // transaction: token delivery is best-effort, and `issueInitialEmailVerification`
+  // never throws, so a mail-provider outage cannot fail an otherwise valid
+  // registration. A user whose first email never arrived can always ask for
+  // another through the resend endpoint.
+  await emailVerificationService.issueInitialEmailVerification({
+    userId: user.id,
+    firstName: user.firstName,
+    to: user.email,
+  });
+
   const refreshToken = authService.generateRefreshToken();
   const refreshTokenHash = authService.hashRefreshToken(refreshToken);
   const expiresAt = authService.calculateRefreshExpiry();
@@ -52,9 +82,67 @@ export async function register(
   const data: RegisterData = {
     user: authService.toAuthenticatedUser(user),
     accessToken,
+    message: 'Registration successful. Please verify your email.',
   };
 
   res.status(201).json({
+    success: true,
+    data,
+  });
+}
+
+/**
+ * Consumes a verification token and confirms the address.
+ *
+ * Unauthenticated by necessity: the token in the request body is the only
+ * credential. Deliberately a `POST` — a `GET /verify-email?token=…` would put
+ * the live token into morgan's access log and any intermediary request log,
+ * which the strict body-based contract keeps out of every log line.
+ */
+export async function verifyEmail(
+  req: AuthenticatedRequest,
+  res: Response
+): Promise<void> {
+  const input = req.body as VerifyEmailInput;
+
+  const result = await emailVerificationService.verifyEmailWithToken(input.token);
+
+  if (!result.verified) {
+    throw emailVerificationService.invalidEmailVerificationLink();
+  }
+
+  const data: VerifyEmailData = {
+    message: emailVerificationMessages.verified,
+    emailVerified: true,
+  };
+
+  res.json({
+    success: true,
+    data,
+  });
+}
+
+/**
+ * Requests a fresh verification email.
+ *
+ * The response is byte-identical for a real unverified account, an already
+ * verified account, a non-ACTIVE account and an address that does not exist, and
+ * the response body never mentions the outcome — so the endpoint cannot be used
+ * to enumerate accounts.
+ */
+export async function resendVerification(
+  req: AuthenticatedRequest,
+  res: Response
+): Promise<void> {
+  const input = req.body as ResendVerificationInput;
+
+  await emailVerificationService.resendEmailVerification(input.email);
+
+  const data: ResendVerificationData = {
+    message: emailVerificationMessages.resend,
+  };
+
+  res.json({
     success: true,
     data,
   });

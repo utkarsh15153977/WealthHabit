@@ -1,5 +1,5 @@
 import { randomBytes, createHash } from 'crypto';
-import { PrismaClient, AuthTokenType } from '@prisma/client';
+import { Prisma, PrismaClient, AuthTokenType } from '@prisma/client';
 import { prisma as sharedPrisma } from '../config/prisma.js';
 
 let prisma: PrismaClient | null = null;
@@ -18,6 +18,15 @@ function generateRawToken(): string {
 
 function hashToken(token: string): string {
   return createHash('sha256').update(token).digest('hex');
+}
+
+/**
+ * SHA-256 digest of a raw single-use token, i.e. exactly the value persisted in
+ * `auth_tokens.tokenHash`. Exported so read-only lookups by presented token
+ * hash the input identically to the atomic consumption path.
+ */
+export function hashAuthToken(rawToken: string): string {
+  return hashToken(rawToken);
 }
 
 export async function createAuthToken(
@@ -39,6 +48,43 @@ export async function createAuthToken(
   });
 
   return { rawToken, tokenHash };
+}
+
+/**
+ * Creates an `EMAIL_VERIFICATION` token with an explicitly supplied lifetime,
+ * used where the TTL is operator-configurable in minutes rather than hours.
+ * The raw token is returned to the caller for delivery only; nothing but the
+ * hash is written.
+ *
+ * Pass `client` when the insert must join an open transaction. It is not
+ * optional in practice for issuance: inserting an `auth_tokens` row takes a
+ * `FOR KEY SHARE` lock on the referenced user row for the foreign-key check,
+ * and that lock conflicts with a `FOR UPDATE` already held by the same logical
+ * operation on another connection. Writing through a second connection would
+ * therefore deadlock against the caller's own transaction until it times out.
+ */
+export async function createEmailVerificationToken(
+  userId: string,
+  ttlMinutes: number,
+  type: AuthTokenType = AuthTokenType.EMAIL_VERIFICATION,
+  client?: AuthTokenQueryClient
+): Promise<{ rawToken: string; tokenHash: string; expiresAt: Date }> {
+  const rawToken = generateRawToken();
+  const tokenHash = hashToken(rawToken);
+  const expiresAt = new Date(Date.now() + ttlMinutes * 60 * 1000);
+
+  const executor = client ?? getPrisma();
+
+  await executor.authToken.create({
+    data: {
+      userId,
+      tokenHash,
+      type,
+      expiresAt,
+    },
+  });
+
+  return { rawToken, tokenHash, expiresAt };
 }
 
 /**
@@ -92,8 +138,81 @@ export async function verifyAuthToken(
   return { valid: true, tokenId: consumed.id };
 }
 
-export async function revokeUserAuthTokens(userId: string, type?: AuthTokenType): Promise<void> {
-  await getPrisma().authToken.updateMany({
+export type AuthTokenQueryClient = PrismaClient | Prisma.TransactionClient;
+
+/**
+ * Owner-agnostic sibling of `verifyAuthToken` for the email-verification flow,
+ * where the request presents only the raw token and no user id.
+ *
+ * The single-statement `UPDATE ... RETURNING` shape is what makes consumption
+ * atomic, and that is preserved verbatim: the consumed-state predicate
+ * (`"usedAt" IS NULL`) and the expiry predicate live INSIDE the statement, so
+ * under READ COMMITTED a losing racer re-evaluates them against the winner's
+ * committed tuple, matches zero rows and consumes nothing. The owner is resolved
+ * from `RETURNING "userId"` — i.e. only a caller that actually won gets an
+ * owner, which is what lets the verification flow mark exactly one user's
+ * address as verified without a separate read-then-update window.
+ *
+ * `client` may be an interactive transaction client, so token consumption,
+ * setting `users.emailVerifiedAt` and writing the audit row commit together.
+ */
+export async function consumeAuthTokenByTokenHash(
+  type: AuthTokenType,
+  rawToken: string,
+  client?: AuthTokenQueryClient
+): Promise<{ valid: boolean; tokenId?: string; userId?: string }> {
+  const tokenHash = hashToken(rawToken);
+  const executor = client ?? getPrisma();
+
+  const rows = await executor.$queryRaw<{ id: string; userId: string }[]>`
+    UPDATE "auth_tokens"
+       SET "usedAt" = now()
+     WHERE "type" = ${type}::"AuthTokenType"
+       AND "tokenHash" = ${tokenHash}
+       AND "usedAt" IS NULL
+       AND "expiresAt" > now()
+    RETURNING "id", "userId"
+  `;
+
+  const consumed = rows[0];
+
+  if (!consumed) {
+    return { valid: false };
+  }
+
+  return { valid: true, tokenId: consumed.id, userId: consumed.userId };
+}
+
+/**
+ * Read-only classification of a presented token, used to explain a rejected
+ * verification attempt in the audit log. It never consumes anything and is
+ * never on the success path, so it cannot widen the atomic-consumption
+ * guarantee of `consumeAuthTokenByTokenHash`.
+ *
+ * `tokenHash` carries no unique index, so this is a `findFirst`. That is safe:
+ * the value is the SHA-256 of 256 bits of `randomBytes`, so a collision is not a
+ * practical concern — and even if one existed, this lookup only ever feeds an
+ * audit classification, never the consumption decision.
+ */
+export async function findAuthTokenByHash(
+  rawToken: string
+): Promise<{ id: string; userId: string; type: AuthTokenType; usedAt: Date | null; expiresAt: Date } | null> {
+  const tokenHash = hashToken(rawToken);
+
+  return getPrisma().authToken.findFirst({
+    where: { tokenHash },
+    select: { id: true, userId: true, type: true, usedAt: true, expiresAt: true },
+  });
+}
+
+export async function revokeUserAuthTokens(
+  userId: string,
+  type?: AuthTokenType,
+  client?: AuthTokenQueryClient
+): Promise<number> {
+  const executor = client ?? getPrisma();
+
+  const result = await executor.authToken.updateMany({
     where: {
       userId,
       ...(type ? { type } : {}),
@@ -103,6 +222,8 @@ export async function revokeUserAuthTokens(userId: string, type?: AuthTokenType)
       usedAt: new Date(),
     },
   });
+
+  return result.count;
 }
 
 export async function cleanupExpiredAuthTokens(): Promise<number> {

@@ -88,6 +88,7 @@ export const authenticate = async (
       lastName: user.lastName,
       role: user.role,
       status: user.status,
+      emailVerified: user.emailVerifiedAt !== null,
     };
 
     next();

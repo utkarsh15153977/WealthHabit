@@ -97,6 +97,100 @@ function resolveCookieSecure(): boolean {
   return true;
 }
 
+/**
+ * Parses an operator-supplied positive integer setting, failing closed to the
+ * built-in default when the value is missing or nonsensical. A silently
+ * accepted `NaN` here would turn a token TTL into an immediately expired token
+ * (or, worse, `NaN` milliseconds in the past for every one of them), so an
+ * unusable value is reported and replaced rather than propagated.
+ */
+function resolveBoundedInt(
+  name: string,
+  raw: string | undefined,
+  fallback: number,
+  min: number,
+  max: number
+): number {
+  const value = raw?.trim();
+
+  if (value === undefined || value === '') {
+    return fallback;
+  }
+
+  const parsed = Number(value);
+
+  if (!Number.isInteger(parsed) || parsed < min || parsed > max) {
+    console.warn(
+      `WARNING: ${name}="${value}" is not a whole number between ${min} and ${max}. ` +
+        `Falling back to the default (${fallback}).`
+    );
+    return fallback;
+  }
+
+  return parsed;
+}
+
+export type EmailTransportKind = 'memory' | 'webhook';
+
+/**
+ * Email delivery transport.
+ *
+ * `memory` is the development/test transport: messages are captured in-process
+ * and nothing leaves the server. It is NEVER a production transport, so a
+ * production deployment that leaves it (or nothing) configured is warned about
+ * loudly at start-up rather than silently accepting that no verification email
+ * can ever be delivered.
+ *
+ * `webhook` is the operator-provided integration point: the message is POSTed
+ * as JSON to `EMAIL_WEBHOOK_URL`, authenticated with `EMAIL_WEBHOOK_TOKEN`. The
+ * endpoint itself (and whatever upstream provider it forwards to) is supplied
+ * per deployment, which keeps the provider SDK out of the application.
+ */
+function resolveEmailTransport(): EmailTransportKind {
+  const value = process.env.EMAIL_TRANSPORT?.trim().toLowerCase();
+
+  if (value === 'webhook') {
+    return 'webhook';
+  }
+
+  if (value === undefined || value === '') {
+    if (process.env.NODE_ENV === 'production') {
+      console.warn(
+        'WARNING: EMAIL_TRANSPORT is not configured. Email delivery is disabled and email ' +
+          'verification links cannot be sent. Set EMAIL_TRANSPORT=webhook plus EMAIL_WEBHOOK_URL ' +
+          'and EMAIL_WEBHOOK_TOKEN, or EMAIL_TRANSPORT=memory to acknowledge the limitation.'
+      );
+    }
+    return 'memory';
+  }
+
+  if (value !== 'memory') {
+    console.warn(
+      `WARNING: EMAIL_TRANSPORT="${value}" is not a supported transport ` +
+        '(expected "memory" or "webhook"). Falling back to "memory", which delivers nothing.'
+    );
+  }
+
+  return 'memory';
+}
+
+function resolveEmailFrom(): string {
+  const value = process.env.EMAIL_FROM?.trim();
+
+  if (value) {
+    return value;
+  }
+
+  if (process.env.NODE_ENV === 'production') {
+    console.warn(
+      'WARNING: EMAIL_FROM is not configured. Verification emails would be sent from the ' +
+        'development placeholder address. Set EMAIL_FROM to a sender on a domain you control.'
+    );
+  }
+
+  return 'WealthHabit <no-reply@wealthhabit.local>';
+}
+
 export type TrustProxyValue = boolean | number | string[];
 
 const TRUST_PROXY_SYMBOLIC_RANGES = new Set(['linklocal', 'loopback', 'uniquelocal']);
@@ -198,6 +292,24 @@ export const env = {
   COOKIE_SECURE: resolveCookieSecure(),
   COOKIE_SAME_SITE: (process.env.COOKIE_SAME_SITE as 'lax' | 'strict' | 'none') || 'lax',
   TRUST_PROXY: resolveTrustProxy(),
+  EMAIL_TRANSPORT: resolveEmailTransport(),
+  EMAIL_FROM: resolveEmailFrom(),
+  EMAIL_WEBHOOK_URL: process.env.EMAIL_WEBHOOK_URL?.trim() || '',
+  EMAIL_WEBHOOK_TOKEN: process.env.EMAIL_WEBHOOK_TOKEN?.trim() || '',
+  EMAIL_VERIFICATION_TOKEN_TTL_MINUTES: resolveBoundedInt(
+    'EMAIL_VERIFICATION_TOKEN_TTL_MINUTES',
+    process.env.EMAIL_VERIFICATION_TOKEN_TTL_MINUTES,
+    24 * 60,
+    5,
+    30 * 24 * 60
+  ),
+  EMAIL_VERIFICATION_RESEND_COOLDOWN_SECONDS: resolveBoundedInt(
+    'EMAIL_VERIFICATION_RESEND_COOLDOWN_SECONDS',
+    process.env.EMAIL_VERIFICATION_RESEND_COOLDOWN_SECONDS,
+    60,
+    0,
+    24 * 60 * 60
+  ),
   isDevelopment: process.env.NODE_ENV === 'development',
   isProduction: process.env.NODE_ENV === 'production',
 };
