@@ -85,12 +85,28 @@ export async function listBudgetsHandler(
   const userId = getAuthenticatedUserId(req);
   const query = (req.query ?? {}) as ListBudgetsQuery;
 
-  const budgets = await listUserBudgets(userId, query);
-  const budgetsData = await Promise.all(budgets.map((budget) => toBudgetDataWithProgress(budget)));
+  const result = await listUserBudgets(userId, query);
+  const budgetsData = result.budgets.map((budget) => {
+    const progress = result.progressByBudget.get(budget.id);
+    if (!progress) {
+      throw new AppError(
+        'Budget progress unavailable',
+        500,
+        undefined,
+        ApiErrorCodes.INTERNAL_ERROR
+      );
+    }
+    return { ...toBudgetData(budget), progress };
+  });
 
   res.json({
     success: true,
-    data: { budgets: budgetsData },
+    data: {
+      budgets: budgetsData,
+      page: result.page,
+      pageSize: result.pageSize,
+      total: result.total,
+    },
   });
 }
 
