@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { Goals } from './Goals';
@@ -442,34 +442,44 @@ describe('Goals page', () => {
     });
 
     it('adds a contribution and refreshes goals', async () => {
-      mockedGoals.getGoals.mockResolvedValue(makeList(makeGoal()));
-      mockedGoals.createGoalContribution.mockResolvedValue(
-        makeContribution({ amount: 75 })
-      );
-      renderGoals();
+      // Pin timezone and clock so the default contribution date is deterministic
+      // instead of depending on the machine's timezone.
+      vi.stubEnv('TZ', 'Asia/Kolkata');
+      vi.useFakeTimers({ toFake: ['Date'] });
+      vi.setSystemTime(new Date('2026-10-04T19:00:00Z'));
+      try {
+        mockedGoals.getGoals.mockResolvedValue(makeList(makeGoal()));
+        mockedGoals.createGoalContribution.mockResolvedValue(
+          makeContribution({ amount: 75 })
+        );
+        renderGoals();
 
-      fireEvent.click(await screen.findByTestId('goal-add-money-Emergency fund'));
-      await screen.findByTestId('contributions-modal');
+        fireEvent.click(await screen.findByTestId('goal-add-money-Emergency fund'));
+        await screen.findByTestId('contributions-modal');
 
-      fireEvent.change(screen.getByTestId('contribution-amount-input'), {
-        target: { value: '75' },
-      });
-      fireEvent.click(screen.getByTestId('contribution-submit'));
+        fireEvent.change(screen.getByTestId('contribution-amount-input'), {
+          target: { value: '75' },
+        });
+        fireEvent.click(screen.getByTestId('contribution-submit'));
 
-      await waitFor(() =>
-        expect(mockedGoals.createGoalContribution).toHaveBeenCalledWith('g1', {
-          amount: '75',
-          contributionDate: expect.stringMatching(/^\d{4}-\d{2}-\d{2}$/),
-          note: undefined,
-        })
-      );
-      expect(await screen.findByTestId('goals-success')).toHaveTextContent(
-        'Contribution added'
-      );
-      await waitFor(() =>
-        expect(mockedGoals.getGoalContributions).toHaveBeenCalledTimes(2)
-      );
-      expect(mockedGoals.getGoals).toHaveBeenCalledTimes(2);
+        await waitFor(() =>
+          expect(mockedGoals.createGoalContribution).toHaveBeenCalledWith('g1', {
+            amount: '75',
+            contributionDate: '2026-10-05',
+            note: undefined,
+          })
+        );
+        expect(await screen.findByTestId('goals-success')).toHaveTextContent(
+          'Contribution added'
+        );
+        await waitFor(() =>
+          expect(mockedGoals.getGoalContributions).toHaveBeenCalledTimes(2)
+        );
+        expect(mockedGoals.getGoals).toHaveBeenCalledTimes(2);
+      } finally {
+        vi.useRealTimers();
+        vi.unstubAllEnvs();
+      }
     });
 
     it('validates the contribution amount client-side', async () => {
@@ -586,6 +596,135 @@ describe('Goals page', () => {
 
       await waitFor(() =>
         expect(screen.queryByTestId('contributions-modal')).toBeNull()
+      );
+    });
+  });
+
+  describe('FE-001 local calendar day defaults', () => {
+    // Freezes the clock AND pins the timezone explicitly so results never depend
+    // on the developer machine's timezone. Only `Date` is faked so that
+    // Testing Library's waitFor/findBy keep using real timers.
+    function freezeAt(timeZone: string, instant: string) {
+      vi.stubEnv('TZ', timeZone);
+      vi.useFakeTimers({ toFake: ['Date'] });
+      vi.setSystemTime(new Date(instant));
+    }
+
+    afterEach(() => {
+      vi.useRealTimers();
+      vi.unstubAllEnvs();
+    });
+
+    it('defaults a new goal to the local day in a positive UTC offset', async () => {
+      // 2026-10-05 00:30 IST is still 2026-10-04 in UTC.
+      freezeAt('Asia/Kolkata', '2026-10-04T19:00:00Z');
+      mockedGoals.getGoals.mockResolvedValue(makeList());
+
+      await openCreateForm();
+
+      expect(screen.getByTestId('goal-target-date-input')).toHaveValue('2026-10-05');
+    });
+
+    it('defaults a new contribution to the local day in a positive UTC offset', async () => {
+      freezeAt('Asia/Kolkata', '2026-10-04T19:00:00Z');
+      mockedGoals.getGoals.mockResolvedValue(makeList(makeGoal()));
+      mockedGoals.createGoalContribution.mockResolvedValue(makeContribution());
+
+      renderGoals();
+      fireEvent.click(await screen.findByTestId('goal-add-money-Emergency fund'));
+      await screen.findByTestId('contributions-modal');
+
+      expect(screen.getByTestId('contribution-date-input')).toHaveValue('2026-10-05');
+
+      fireEvent.change(screen.getByTestId('contribution-amount-input'), {
+        target: { value: '75' },
+      });
+      fireEvent.click(screen.getByTestId('contribution-submit'));
+
+      await waitFor(() =>
+        expect(mockedGoals.createGoalContribution).toHaveBeenCalledWith('g1', {
+          amount: '75',
+          contributionDate: '2026-10-05',
+          note: undefined,
+        })
+      );
+    });
+
+    it('defaults a new goal to the local day in a negative UTC offset', async () => {
+      // 2026-10-04 23:30 EDT is already 2026-10-05 in UTC.
+      freezeAt('America/New_York', '2026-10-05T03:30:00Z');
+      mockedGoals.getGoals.mockResolvedValue(makeList());
+
+      await openCreateForm();
+
+      expect(screen.getByTestId('goal-target-date-input')).toHaveValue('2026-10-04');
+    });
+
+    it('defaults a new contribution to the local day in a negative UTC offset', async () => {
+      freezeAt('America/New_York', '2026-10-05T03:30:00Z');
+      mockedGoals.getGoals.mockResolvedValue(makeList(makeGoal()));
+      mockedGoals.createGoalContribution.mockResolvedValue(makeContribution());
+
+      renderGoals();
+      fireEvent.click(await screen.findByTestId('goal-add-money-Emergency fund'));
+      await screen.findByTestId('contributions-modal');
+
+      expect(screen.getByTestId('contribution-date-input')).toHaveValue('2026-10-04');
+
+      fireEvent.change(screen.getByTestId('contribution-amount-input'), {
+        target: { value: '75' },
+      });
+      fireEvent.click(screen.getByTestId('contribution-submit'));
+
+      await waitFor(() =>
+        expect(mockedGoals.createGoalContribution).toHaveBeenCalledWith('g1', {
+          amount: '75',
+          contributionDate: '2026-10-04',
+          note: undefined,
+        })
+      );
+    });
+
+    it('keeps the UTC day unchanged when the timezone is UTC', async () => {
+      freezeAt('UTC', '2026-10-05T03:30:00Z');
+      mockedGoals.getGoals.mockResolvedValue(makeList());
+
+      await openCreateForm();
+
+      expect(screen.getByTestId('goal-target-date-input')).toHaveValue('2026-10-05');
+    });
+
+    it('still prefills the stored target date when editing a goal', async () => {
+      freezeAt('Asia/Kolkata', '2026-10-04T19:00:00Z');
+      mockedGoals.getGoals.mockResolvedValue(
+        makeList(makeGoal({ targetDate: '2027-03-15T00:00:00.000Z' }))
+      );
+
+      renderGoals();
+      fireEvent.click(await screen.findByTestId('goal-edit-Emergency fund'));
+
+      const form = await screen.findByTestId('goal-form');
+      expect(within(form).getByTestId('goal-target-date-input')).toHaveValue('2027-03-15');
+    });
+
+    it('still prefills the stored contribution date when editing a contribution', async () => {
+      freezeAt('Asia/Kolkata', '2026-10-04T19:00:00Z');
+      mockedGoals.getGoals.mockResolvedValue(makeList(makeGoal()));
+      mockedGoals.getGoalContributions.mockResolvedValue({
+        contributions: [makeContribution({ contributionDate: '2026-09-20T00:00:00.000Z' })],
+        page: 1,
+        pageSize: 50,
+        total: 1,
+      });
+
+      renderGoals();
+      fireEvent.click(await screen.findByTestId('goal-add-money-Emergency fund'));
+      const modal = await screen.findByTestId('contributions-modal');
+
+      fireEvent.click(within(modal).getByRole('button', { name: /edit/i }));
+
+      await waitFor(() =>
+        expect(screen.getByTestId('contribution-date-input')).toHaveValue('2026-09-20')
       );
     });
   });
