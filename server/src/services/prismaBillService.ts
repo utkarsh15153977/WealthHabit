@@ -32,25 +32,30 @@ export async function listUserBills(
   userId: string,
   query?: ListBillsQuery
 ): Promise<BillWithCategory[]> {
-  const where: Prisma.BillWhereInput = { userId };
+  const and: Prisma.BillWhereInput[] = [{ userId }];
 
+  // `status` and `active` are independent filters that constrain the same
+  // column, so they are combined with AND rather than assigned one after the
+  // other. Assigning `where.status` twice let `active` silently discard an
+  // explicit `status` (for example status=CANCELLED&active=true returned every
+  // non-cancelled bill instead of nothing).
   if (query?.status) {
-    where.status = query.status;
+    and.push({ status: query.status });
   }
 
   if (query?.active === 'true') {
-    where.status = { not: 'CANCELLED' };
+    and.push({ status: { not: 'CANCELLED' } });
   } else if (query?.active === 'false') {
-    where.status = 'CANCELLED';
+    and.push({ status: 'CANCELLED' });
   }
 
   if (query?.month) {
     const { start, end } = monthBounds(query.month);
-    where.nextDueDate = { gte: start, lt: end };
+    and.push({ nextDueDate: { gte: start, lt: end } });
   }
 
   return prisma.bill.findMany({
-    where,
+    where: { AND: and },
     include: { category: true },
     orderBy: { nextDueDate: 'asc' },
   });
