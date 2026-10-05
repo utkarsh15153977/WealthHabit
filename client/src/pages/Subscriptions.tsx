@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Pencil,
   Plus,
@@ -114,7 +114,7 @@ export function Subscriptions() {
 
   const [subscriptions, setSubscriptions] = useState<Subscription[]>([]);
   const [isLoading, setIsLoading] = useState(true);
-  const [hasLoadedOnce, setHasLoadedOnce] = useState(false);
+  const hasLoadedOnce = useRef(false);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
@@ -185,9 +185,9 @@ export function Subscriptions() {
           month: monthFilter || undefined,
         });
         setSubscriptions(result.subscriptions);
-        setHasLoadedOnce(true);
+        hasLoadedOnce.current = true;
       } catch (error) {
-        if (initial || hasLoadedOnce) {
+        if (initial || hasLoadedOnce.current) {
           setLoadError(getApiErrorMessage(error));
         }
       } finally {
@@ -198,7 +198,7 @@ export function Subscriptions() {
         }
       }
     },
-    [hasLoadedOnce, statusFilter, monthFilter]
+    [statusFilter, monthFilter]
   );
 
   useEffect(() => {
@@ -207,8 +207,8 @@ export function Subscriptions() {
   }, [fetchProfileCurrency, fetchCategories]);
 
   useEffect(() => {
-    void fetchSubscriptions({ initial: !hasLoadedOnce });
-  }, [fetchSubscriptions, hasLoadedOnce]);
+    void fetchSubscriptions({ initial: !hasLoadedOnce.current });
+  }, [fetchSubscriptions]);
 
   const closeForm = useCallback(() => {
     setIsFormOpen(false);
@@ -319,7 +319,7 @@ export function Subscriptions() {
 
   const formatAmount = useMemo(() => createCurrencyFormatter(currency), [currency]);
 
-  if (isLoading && !hasLoadedOnce) {
+  if (isLoading && !hasLoadedOnce.current) {
     return <Loading />;
   }
 
@@ -327,14 +327,14 @@ export function Subscriptions() {
     !isLoading &&
     !loadError &&
     subscriptions.length === 0 &&
-    hasLoadedOnce &&
+    hasLoadedOnce.current &&
     !statusFilter &&
     !monthFilter;
   const showNoMatches =
     !isLoading &&
     !loadError &&
     subscriptions.length === 0 &&
-    hasLoadedOnce &&
+    hasLoadedOnce.current &&
     (Boolean(statusFilter) || Boolean(monthFilter));
 
   return (

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Pencil,
   Plus,
@@ -115,7 +115,7 @@ export function Bills() {
 
   const [bills, setBills] = useState<Bill[]>([]);
   const [isLoading, setIsLoading] = useState(true);
-  const [hasLoadedOnce, setHasLoadedOnce] = useState(false);
+  const hasLoadedOnce = useRef(false);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
@@ -186,9 +186,9 @@ export function Bills() {
           month: monthFilter || undefined,
         });
         setBills(result.bills);
-        setHasLoadedOnce(true);
+        hasLoadedOnce.current = true;
       } catch (error) {
-        if (initial || hasLoadedOnce) {
+        if (initial || hasLoadedOnce.current) {
           setLoadError(getApiErrorMessage(error));
         }
       } finally {
@@ -199,7 +199,7 @@ export function Bills() {
         }
       }
     },
-    [hasLoadedOnce, statusFilter, monthFilter]
+    [statusFilter, monthFilter]
   );
 
   useEffect(() => {
@@ -208,8 +208,8 @@ export function Bills() {
   }, [fetchProfileCurrency, fetchCategories]);
 
   useEffect(() => {
-    void fetchBills({ initial: !hasLoadedOnce });
-  }, [fetchBills, hasLoadedOnce]);
+    void fetchBills({ initial: !hasLoadedOnce.current });
+  }, [fetchBills]);
 
   const closeForm = useCallback(() => {
     setIsFormOpen(false);
@@ -321,17 +321,22 @@ export function Bills() {
 
   const formatAmount = useMemo(() => createCurrencyFormatter(currency), [currency]);
 
-  if (isLoading && !hasLoadedOnce) {
+  if (isLoading && !hasLoadedOnce.current) {
     return <Loading />;
   }
 
   const showEmpty =
-    !isLoading && !loadError && bills.length === 0 && hasLoadedOnce && !statusFilter && !monthFilter;
+    !isLoading &&
+    !loadError &&
+    bills.length === 0 &&
+    hasLoadedOnce.current &&
+    !statusFilter &&
+    !monthFilter;
   const showNoMatches =
     !isLoading &&
     !loadError &&
     bills.length === 0 &&
-    hasLoadedOnce &&
+    hasLoadedOnce.current &&
     (Boolean(statusFilter) || Boolean(monthFilter));
 
   return (
