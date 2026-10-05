@@ -1,4 +1,5 @@
 import { Response } from 'express';
+import { CategoryType } from '@prisma/client';
 import { AuthenticatedRequest } from '../middleware/authMiddleware.js';
 import { getAuthenticatedUserId } from '../middleware/ownershipMiddleware.js';
 import {
@@ -68,7 +69,20 @@ function toTransactionData(tx: {
   };
 }
 
-async function assertUsableCategory(categoryId: string, userId: string): Promise<void> {
+function typeMatchesCategory(type: string, categoryType: CategoryType): boolean {
+  return (type as unknown as CategoryType) === categoryType;
+}
+
+function categoryTypeMismatchError(field: 'body.categoryId' | 'body.type'): AppError {
+  const message = 'Category type must match the transaction type';
+  return new AppError(message, 400, { [field]: [message] }, ApiErrorCodes.VALIDATION_ERROR);
+}
+
+async function assertUsableCategory(
+  categoryId: string,
+  userId: string,
+  expectedType?: string
+): Promise<void> {
   const category = await findUsableCategory(categoryId, userId);
   if (!category) {
     throw new AppError(
@@ -77,6 +91,10 @@ async function assertUsableCategory(categoryId: string, userId: string): Promise
       undefined,
       ApiErrorCodes.CATEGORY_NOT_FOUND
     );
+  }
+
+  if (expectedType !== undefined && !typeMatchesCategory(expectedType, category.type)) {
+    throw categoryTypeMismatchError('body.categoryId');
   }
 }
 
@@ -87,7 +105,7 @@ export async function createTransactionHandler(
   const userId = getAuthenticatedUserId(req);
   const input = req.body as CreateTransactionInput;
 
-  await assertUsableCategory(input.categoryId, userId);
+  await assertUsableCategory(input.categoryId, userId, input.type);
 
   const transaction = await createTransaction(userId, input);
 
@@ -167,8 +185,15 @@ export async function updateTransactionHandler(
     );
   }
 
+  const effectiveType = input.type !== undefined ? input.type : existing.type;
+
   if (input.categoryId !== undefined) {
-    await assertUsableCategory(input.categoryId, userId);
+    await assertUsableCategory(input.categoryId, userId, effectiveType);
+  } else if (
+    input.type !== undefined &&
+    !typeMatchesCategory(effectiveType, existing.category.type)
+  ) {
+    throw categoryTypeMismatchError('body.type');
   }
 
   const transaction = await updateTransaction(existing.id, input);
