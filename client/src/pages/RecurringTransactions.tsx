@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Pencil,
   Plus,
@@ -113,7 +113,7 @@ export function RecurringTransactions() {
 
   const [rules, setRules] = useState<RecurringTransaction[]>([]);
   const [isLoading, setIsLoading] = useState(true);
-  const [hasLoadedOnce, setHasLoadedOnce] = useState(false);
+  const hasLoadedOnce = useRef(false);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
@@ -182,9 +182,9 @@ export function RecurringTransactions() {
       try {
         const result = await recurringTransactionApi.getRecurringTransactions();
         setRules(result.recurringTransactions);
-        setHasLoadedOnce(true);
+        hasLoadedOnce.current = true;
       } catch (error) {
-        if (initial || hasLoadedOnce) {
+        if (initial || hasLoadedOnce.current) {
           setLoadError(getApiErrorMessage(error));
         }
       } finally {
@@ -195,7 +195,7 @@ export function RecurringTransactions() {
         }
       }
     },
-    [hasLoadedOnce]
+    []
   );
 
   useEffect(() => {
@@ -204,8 +204,8 @@ export function RecurringTransactions() {
   }, [fetchProfileCurrency, fetchCategories]);
 
   useEffect(() => {
-    void fetchRules({ initial: !hasLoadedOnce });
-  }, [fetchRules, hasLoadedOnce]);
+    void fetchRules({ initial: !hasLoadedOnce.current });
+  }, [fetchRules]);
 
   const closeForm = useCallback(() => {
     setIsFormOpen(false);
@@ -338,11 +338,12 @@ export function RecurringTransactions() {
 
   const formatAmount = useMemo(() => createCurrencyFormatter(currency), [currency]);
 
-  if (isLoading && !hasLoadedOnce) {
+  if (isLoading && !hasLoadedOnce.current) {
     return <Loading />;
   }
 
-  const showEmpty = !isLoading && !loadError && rules.length === 0 && hasLoadedOnce;
+  const showEmpty =
+    !isLoading && !loadError && rules.length === 0 && hasLoadedOnce.current;
 
   return (
     <div className="page-container">

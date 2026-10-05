@@ -97,6 +97,12 @@ function renderPage() {
   );
 }
 
+async function waitForRefreshIdle(): Promise<void> {
+  await waitFor(() => {
+    expect(screen.queryByText('Refreshing...')).toBeNull();
+  });
+}
+
 describe('Habits page', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -115,6 +121,51 @@ describe('Habits page', () => {
     }));
     mockedApi.createHabit.mockResolvedValue({ habit: makeHabit() });
     mockedApi.deleteHabit.mockResolvedValue({ message: 'Habit deleted' });
+  });
+
+  it('issues the two list requests exactly once on initial render', async () => {
+    mockLists([makeHabit()]);
+
+    renderPage();
+
+    expect(await screen.findByText('Track daily expenses')).toBeDefined();
+    await waitForRefreshIdle();
+
+    expect(mockedApi.getHabits).toHaveBeenCalledTimes(2);
+    expect(mockedApi.getHabits).toHaveBeenCalledWith({
+      page: 1,
+      pageSize: 10,
+      active: true,
+      includeProgress: true,
+    });
+    expect(mockedApi.getHabits).toHaveBeenCalledWith({
+      pageSize: 50,
+      active: false,
+      includeProgress: true,
+    });
+  });
+
+  it('repeats both list requests exactly once when the page changes', async () => {
+    mockLists([makeHabit()], 25);
+
+    renderPage();
+
+    expect(await screen.findByTestId('page-indicator')).toHaveTextContent(
+      'Page 1 of 3'
+    );
+    await waitForRefreshIdle();
+    expect(mockedApi.getHabits).toHaveBeenCalledTimes(2);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Next' }));
+
+    await waitFor(() => {
+      expect(mockedApi.getHabits).toHaveBeenCalledWith(
+        expect.objectContaining({ page: 2, active: true })
+      );
+    });
+    await waitForRefreshIdle();
+
+    expect(mockedApi.getHabits).toHaveBeenCalledTimes(4);
   });
 
   it('shows the empty state when there are no habits', async () => {

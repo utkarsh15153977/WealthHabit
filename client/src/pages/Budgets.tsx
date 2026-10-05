@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Pencil,
   Plus,
@@ -93,7 +93,7 @@ export function Budgets() {
   const [page, setPage] = useState(1);
   const [total, setTotal] = useState(0);
   const [isLoading, setIsLoading] = useState(true);
-  const [hasLoadedOnce, setHasLoadedOnce] = useState(false);
+  const hasLoadedOnce = useRef(false);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
@@ -160,9 +160,9 @@ export function Budgets() {
       const result = await budgetApi.getBudgets({ page, pageSize: PAGE_SIZE });
       setBudgets(result.budgets);
       setTotal(result.total);
-      setHasLoadedOnce(true);
+      hasLoadedOnce.current = true;
     } catch (error) {
-      if (initial || hasLoadedOnce) {
+      if (initial || hasLoadedOnce.current) {
         setLoadError(getApiErrorMessage(error));
       }
     } finally {
@@ -172,7 +172,7 @@ export function Budgets() {
         setIsFetching(false);
       }
     }
-  }, [hasLoadedOnce, page]);
+  }, [page]);
 
   useEffect(() => {
     void fetchProfileCurrency();
@@ -180,8 +180,8 @@ export function Budgets() {
   }, [fetchProfileCurrency, fetchCategories]);
 
   useEffect(() => {
-    void fetchBudgets({ initial: !hasLoadedOnce });
-  }, [fetchBudgets, hasLoadedOnce]);
+    void fetchBudgets({ initial: !hasLoadedOnce.current });
+  }, [fetchBudgets]);
 
   const closeForm = useCallback(() => {
     setIsFormOpen(false);
@@ -273,11 +273,11 @@ export function Budgets() {
 
   const formatAmount = useMemo(() => createCurrencyFormatter(currency), [currency]);
 
-  if (isLoading && !hasLoadedOnce) {
+  if (isLoading && !hasLoadedOnce.current) {
     return <Loading />;
   }
 
-  const showEmpty = !isLoading && !loadError && budgets.length === 0 && hasLoadedOnce;
+  const showEmpty = !isLoading && !loadError && budgets.length === 0 && hasLoadedOnce.current;
 
   return (
     <div className="page-container">

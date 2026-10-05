@@ -80,6 +80,12 @@ async function waitForPagerSettled(): Promise<void> {
   });
 }
 
+async function waitForRefreshIdle(): Promise<void> {
+  await waitFor(() => {
+    expect(screen.queryByText('Refreshing budgets...')).toBeNull();
+  });
+}
+
 describe('Budgets page', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -122,6 +128,41 @@ describe('Budgets page', () => {
     await waitFor(() => {
       expect(mockedBudgetApi.getBudgets).toHaveBeenCalledWith({ page: 1, pageSize: 20 });
     });
+  });
+
+  it('fetches budgets exactly once on initial render', async () => {
+    mockedBudgetApi.getBudgets.mockResolvedValue(listResponse([makeBudget()], 1, 1));
+
+    renderPage();
+
+    expect(await screen.findByText('Groceries')).toBeDefined();
+    await waitForPagerSettled();
+
+    expect(mockedBudgetApi.getBudgets).toHaveBeenCalledTimes(1);
+    expect(mockedBudgetApi.getBudgets).toHaveBeenCalledWith({ page: 1, pageSize: 20 });
+  });
+
+  it('requests page two exactly once when Next is clicked', async () => {
+    mockedBudgetApi.getBudgets.mockImplementation(async (params) => {
+      if (params?.page === 2) {
+        return listResponse([makeBudget({ id: 'b2', name: 'Transport' })], 45, 2);
+      }
+      return listResponse([makeBudget()], 45, 1);
+    });
+
+    renderPage();
+
+    expect(await screen.findByText('Groceries')).toBeDefined();
+    await waitForPagerSettled();
+    expect(mockedBudgetApi.getBudgets).toHaveBeenCalledTimes(1);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Next' }));
+
+    expect(await screen.findByText('Transport')).toBeDefined();
+    await waitForRefreshIdle();
+
+    expect(mockedBudgetApi.getBudgets).toHaveBeenCalledTimes(2);
+    expect(mockedBudgetApi.getBudgets).toHaveBeenLastCalledWith({ page: 2, pageSize: 20 });
   });
 
   it('hides the pager when every budget fits on one page', async () => {

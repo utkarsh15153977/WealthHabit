@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   CalendarCheck,
   CheckCircle2,
@@ -146,7 +146,7 @@ export function Habits() {
   const [page, setPage] = useState(1);
   const [pausedHabits, setPausedHabits] = useState<HabitWithProgress[]>([]);
   const [isLoading, setIsLoading] = useState(true);
-  const [hasLoadedOnce, setHasLoadedOnce] = useState(false);
+  const hasLoadedOnce = useRef(false);
   const [isFetching, setIsFetching] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
@@ -212,7 +212,7 @@ export function Habits() {
         setActiveHabits(activeResult.habits);
         setActiveTotal(activeResult.total);
         setPausedHabits(pausedResult.habits);
-        setHasLoadedOnce(true);
+        hasLoadedOnce.current = true;
       } catch (error) {
         if (requestId !== requestIdRef.current) return;
         setActiveHabits([]);
@@ -232,8 +232,8 @@ export function Habits() {
   );
 
   useEffect(() => {
-    void fetchHabits({ initial: !hasLoadedOnce });
-  }, [fetchHabits, hasLoadedOnce]);
+    void fetchHabits({ initial: !hasLoadedOnce.current });
+  }, [fetchHabits]);
 
   const closeForm = useCallback(() => {
     setIsFormOpen(false);
@@ -401,7 +401,7 @@ export function Habits() {
 
   const totalPages = Math.max(1, Math.ceil(activeTotal / PAGE_SIZE));
   const showEmpty =
-    hasLoadedOnce &&
+    hasLoadedOnce.current &&
     !isLoading &&
     !loadError &&
     activeHabits.length === 0 &&
@@ -570,7 +570,7 @@ export function Habits() {
     );
   };
 
-  if (isLoading && !hasLoadedOnce) {
+  if (isLoading && !hasLoadedOnce.current) {
     return <Loading />;
   }
 
@@ -699,7 +699,7 @@ export function Habits() {
           </>
         )}
 
-        {isFetching && hasLoadedOnce && (
+        {isFetching && hasLoadedOnce.current && (
           <p className="text-xs text-text-muted text-center mt-4" aria-live="polite">
             Refreshing...
           </p>
