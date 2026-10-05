@@ -165,6 +165,105 @@ describe('AuthToken Service', () => {
 
       expect(result.valid).toBe(false);
     });
+
+    // --- DB-002: atomic single-use consumption under concurrency ---
+
+    it('should allow only one concurrent consumption of the same token', async () => {
+      const { rawToken, tokenHash } = await createAuthToken(
+        userId,
+        AuthTokenType.EMAIL_VERIFICATION
+      );
+
+      const unused = await testPrisma.authToken.findFirst({ where: { userId, tokenHash } });
+      expect(unused?.usedAt).toBeNull();
+
+      // Two genuinely concurrent callers race for one single-use token. No
+      // timers, sleeps or artificial delays are used: the winner is decided by
+      // the conditional UPDATE inside the database, so the invariant under test
+      // is "exactly one consumption" regardless of how the calls interleave.
+      const results = await Promise.all([
+        verifyAuthToken(userId, AuthTokenType.EMAIL_VERIFICATION, rawToken),
+        verifyAuthToken(userId, AuthTokenType.EMAIL_VERIFICATION, rawToken),
+      ]);
+
+      const winners = results.filter((result) => result.valid);
+      const losers = results.filter((result) => !result.valid);
+
+      expect(winners).toHaveLength(1);
+      expect(losers).toHaveLength(1);
+
+      // Loser contract: a plain failure result, no exception, no token id.
+      expect(losers[0]).toEqual({ valid: false });
+      expect(losers[0].tokenId).toBeUndefined();
+
+      // Winner received the consumed token id.
+      expect(winners[0].tokenId).toBe(unused!.id);
+
+      // Database invariant: one row, consumed exactly once.
+      const rows = await testPrisma.authToken.findMany({ where: { userId, tokenHash } });
+      expect(rows).toHaveLength(1);
+      expect(rows[0].id).toBe(unused!.id);
+      expect(rows[0].usedAt).not.toBeNull();
+    });
+
+    it('should consume the token exactly once under 5-way concurrent contention', async () => {
+      const { rawToken, tokenHash } = await createAuthToken(userId, AuthTokenType.PASSWORD_RESET);
+
+      const unused = await testPrisma.authToken.findFirst({ where: { userId, tokenHash } });
+
+      const results = await Promise.all(
+        Array.from({ length: 5 }, () =>
+          verifyAuthToken(userId, AuthTokenType.PASSWORD_RESET, rawToken)
+        )
+      );
+
+      const winners = results.filter((result) => result.valid);
+      const losers = results.filter((result) => !result.valid);
+
+      expect(winners).toHaveLength(1);
+      expect(losers).toHaveLength(4);
+      expect(losers.every((result) => result.tokenId === undefined)).toBe(true);
+      expect(winners[0].tokenId).toBe(unused!.id);
+
+      const rows = await testPrisma.authToken.findMany({ where: { userId, tokenHash } });
+      expect(rows).toHaveLength(1);
+      expect(rows[0].usedAt).not.toBeNull();
+    });
+
+    it('should not consume the token on concurrent wrong-user or wrong-type attempts', async () => {
+      const { rawToken, tokenHash } = await createAuthToken(
+        userId,
+        AuthTokenType.EMAIL_VERIFICATION
+      );
+
+      const otherUser = await testPrisma.user.create({
+        data: {
+          email: createTestUser().email,
+          passwordHash,
+          firstName: 'Other',
+          lastName: 'User',
+          role: Role.USER,
+          status: AccountStatus.ACTIVE,
+        },
+      });
+
+      const results = await Promise.all([
+        verifyAuthToken(otherUser.id, AuthTokenType.EMAIL_VERIFICATION, rawToken),
+        verifyAuthToken(userId, AuthTokenType.PASSWORD_RESET, rawToken),
+        verifyAuthToken(otherUser.id, AuthTokenType.PASSWORD_RESET, rawToken),
+      ]);
+
+      expect(results.every((result) => result.valid === false)).toBe(true);
+      expect(results.every((result) => result.tokenId === undefined)).toBe(true);
+
+      // The legitimate token must remain unused and still consumable.
+      const row = await testPrisma.authToken.findFirst({ where: { userId, tokenHash } });
+      expect(row?.usedAt).toBeNull();
+
+      const owner = await verifyAuthToken(userId, AuthTokenType.EMAIL_VERIFICATION, rawToken);
+      expect(owner.valid).toBe(true);
+      expect(owner.tokenId).toBe(row!.id);
+    });
   });
 
   describe('revokeUserAuthTokens', () => {
