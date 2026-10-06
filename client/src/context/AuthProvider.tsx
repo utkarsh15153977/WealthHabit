@@ -8,13 +8,21 @@ import {
   me as meRequest,
   refresh as refreshRequest,
   register as registerRequest,
+  verifyMfaChallenge,
+  verifyMfaRecovery,
 } from '../services/authApi';
 import {
   getAccessToken,
   onAuthFailure,
   setAccessToken as setStoredAccessToken,
 } from '../services/api';
-import type { LoginRequest, RegisterRequest, User } from '../types/auth';
+import type {
+  LoginRequest,
+  MfaChallengeRequest,
+  MfaRecoveryRequest,
+  RegisterRequest,
+  User,
+} from '../types/auth';
 import { AuthContext } from './authContext';
 
 export function AuthProvider({ children }: { children: ReactNode }) {
@@ -76,8 +84,33 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const login = useCallback(
     async (data: LoginRequest) => {
       const result = await loginRequest(data);
+      if (result.requiresTwoFactor) {
+        // No session yet — the caller must complete the challenge.
+        return result;
+      }
       setToken(result.accessToken);
       setUser(result.user);
+      return result;
+    },
+    [setToken]
+  );
+
+  const completeTwoFactorChallenge = useCallback(
+    async (data: MfaChallengeRequest) => {
+      const result = await verifyMfaChallenge(data);
+      setToken(result.accessToken);
+      setUser(result.user);
+      return result.user;
+    },
+    [setToken]
+  );
+
+  const completeTwoFactorRecovery = useCallback(
+    async (data: MfaRecoveryRequest) => {
+      const result = await verifyMfaRecovery(data);
+      setToken(result.accessToken);
+      setUser(result.user);
+      return result.user;
     },
     [setToken]
   );
@@ -120,13 +153,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       isAuthenticated: user !== null,
       isLoading,
       login,
+      completeTwoFactorChallenge,
+      completeTwoFactorRecovery,
       register,
       logout,
       logoutAll,
       refreshSession,
       updateUser,
     }),
-    [user, accessToken, isLoading, login, register, logout, logoutAll, refreshSession, updateUser]
+    [user, accessToken, isLoading, login, completeTwoFactorChallenge, completeTwoFactorRecovery, register, logout, logoutAll, refreshSession, updateUser]
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

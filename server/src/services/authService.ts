@@ -93,15 +93,21 @@ function clearRefreshCookie(res: Response): void {
   res.cookie(env.COOKIE_NAME, '', cookieOptions);
 }
 
-function toAuthenticatedUser(user: {
-  id: string;
-  email: string;
-  firstName: string;
-  lastName: string;
-  role: Role;
-  status: AccountStatus;
-  emailVerifiedAt: Date | null;
-}): AuthenticatedUser {
+function toAuthenticatedUser(
+  user: {
+    id: string;
+    email: string;
+    firstName: string;
+    lastName: string;
+    role: Role;
+    status: AccountStatus;
+    emailVerifiedAt: Date | null;
+    mfa?: { enabledAt: Date | null } | null;
+  }
+): AuthenticatedUser {
+  const mfaEnabled = user.mfa?.enabledAt != null;
+  const mfaPending = user.mfa != null && !mfaEnabled;
+
   return {
     id: user.id,
     email: user.email,
@@ -110,6 +116,8 @@ function toAuthenticatedUser(user: {
     role: user.role,
     status: user.status,
     emailVerified: user.emailVerifiedAt !== null,
+    twoFactorEnabled: mfaEnabled,
+    twoFactorPending: mfaPending,
   };
 }
 

@@ -31,6 +31,11 @@ const NO_REFRESH_URLS = [
   // refresh attempt would turn into "clear this session's access token".
   '/auth/forgot-password',
   '/auth/reset-password',
+  // Same reasoning again: both 2FA completion endpoints are reached with no
+  // session (the challenge token is the credential), and a stale or spent
+  // challenge legitimately answers 400 MFA_CHALLENGE_INVALID.
+  '/auth/2fa/challenge',
+  '/auth/2fa/recovery',
 ];
 
 export function getAccessToken(): string | null {

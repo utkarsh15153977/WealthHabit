@@ -82,6 +82,7 @@ enum ChallengeStatus {
 enum AuthTokenType {
   EMAIL_VERIFICATION
   PASSWORD_RESET
+  MFA_CHALLENGE
 }
 
 enum NotificationType {
@@ -108,6 +109,8 @@ model User {
 
   sessions              Session[]
   authTokens            AuthToken[]
+  mfa                   UserMfa?
+  recoveryCodes         RecoveryCode[]
   financialProfile      FinancialProfile?
   categories            Category[]
   transactions          Transaction[]
@@ -165,6 +168,34 @@ model AuthToken {
   @@index([type])
   @@index([expiresAt])
   @@map("auth_tokens")
+}
+
+model UserMfa {
+  id              String    @id @default(cuid())
+  userId          String    @unique
+  secretEncrypted String
+  setupStartedAt  DateTime?
+  enabledAt       DateTime?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("user_mfa")
+}
+
+model RecoveryCode {
+  id        String    @id @default(cuid())
+  userId    String
+  codeHash  String
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("recovery_codes")
 }
 
 model FinancialProfile {

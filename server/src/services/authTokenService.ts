@@ -105,6 +105,15 @@ export async function createPasswordResetToken(
   return createTypedAuthToken(userId, AuthTokenType.PASSWORD_RESET, ttlMinutes, client);
 }
 
+/** `MFA_CHALLENGE` flavour of {@link createTypedAuthToken}. */
+export async function createMfaChallengeToken(
+  userId: string,
+  ttlMinutes: number,
+  client?: AuthTokenQueryClient
+): Promise<{ rawToken: string; tokenHash: string; expiresAt: Date }> {
+  return createTypedAuthToken(userId, AuthTokenType.MFA_CHALLENGE, ttlMinutes, client);
+}
+
 /**
  * Atomically consumes a single-use auth token and returns its id.
  *

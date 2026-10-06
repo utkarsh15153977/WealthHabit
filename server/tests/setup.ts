@@ -40,6 +40,8 @@ beforeEach(async () => {
   await prisma.category.deleteMany();
   await prisma.session.deleteMany();
   await prisma.authToken.deleteMany();
+  await prisma.recoveryCode.deleteMany();
+  await prisma.userMfa.deleteMany();
   await prisma.auditLog.deleteMany();
   await prisma.financialProfile.deleteMany();
   await prisma.user.deleteMany();
