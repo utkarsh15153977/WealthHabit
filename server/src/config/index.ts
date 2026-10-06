@@ -76,6 +76,88 @@ function validateJwtSecret(): string {
 }
 
 /**
+ * Placeholder values published in tracked template files
+ * (`server/.env.production.example`), so an operator who copies the template
+ * and replaces only `DATABASE_URL` and `CLIENT_URL` leaves the MFA encryption
+ * placeholder in place and production refuses to start rather than deriving a
+ * predictable AES key. Matched case-insensitively after trimming, exactly like
+ * the JWT check.
+ */
+const MFA_ENCRYPTION_PLACEHOLDER_VALUES = [
+  'replace-with-at-least-32-random-characters-from-a-secret-store',
+];
+
+const MFA_ENCRYPTION_PLACEHOLDER_PATTERN =
+  /^(replace[-_\s]?with|change[-_\s]?me|change[-_\s]?this|your[-_\s]?mfa[-_\s]?secret)/i;
+
+function isMfaEncryptionPlaceholder(secret: string): boolean {
+  const normalized = secret.trim().toLowerCase();
+  return (
+    MFA_ENCRYPTION_PLACEHOLDER_VALUES.includes(normalized) ||
+    MFA_ENCRYPTION_PLACEHOLDER_PATTERN.test(normalized)
+  );
+}
+
+/**
+ * Resolves the raw material for the AES-256-GCM key that protects stored TOTP
+ * secrets at rest. The AES key itself is derived in `crypto/aesGcm.ts` as the
+ * SHA-256 of this value; this resolver only makes sure a sane value exists.
+ *
+ * Same fail-closed shape as `validateJwtSecret`: development/test silently
+ * fall back to a published default (acceptable because a dev database holds no
+ * real secrets), while production throws on a missing, default, short or
+ * placeholder value. A stored TOTP secret encrypted under a placeholder key
+ * would be decryptable by anyone reading the repository, which is exactly the
+ * JWT-placeholder hazard only worse (secrets are long-lived material).
+ */
+function validateMfaEncryptionKey(): string {
+  const secret = process.env.MFA_SECRET_ENCRYPTION_KEY;
+
+  if (!secret) {
+    if (process.env.NODE_ENV === 'production') {
+      throw new Error('MFA_SECRET_ENCRYPTION_KEY must be set in production');
+    }
+    return 'dev-mfa-encryption-key-change-in-production';
+  }
+
+  if (secret === 'dev-mfa-encryption-key-change-in-production') {
+    if (process.env.NODE_ENV === 'production') {
+      throw new Error(
+        'MFA_SECRET_ENCRYPTION_KEY cannot be the default development value in production'
+      );
+    }
+    console.warn(
+      'WARNING: MFA_SECRET_ENCRYPTION_KEY is using the default development value. ' +
+        'Use a custom key in production.'
+    );
+    return secret;
+  }
+
+  if (isMfaEncryptionPlaceholder(secret)) {
+    if (process.env.NODE_ENV === 'production') {
+      throw new Error(
+        'MFA_SECRET_ENCRYPTION_KEY is still the placeholder value from server/.env.production.example. ' +
+          'Generate a unique key and inject it from a secret store.'
+      );
+    }
+    console.warn(
+      'WARNING: MFA_SECRET_ENCRYPTION_KEY looks like a template placeholder. Use a unique key in production.'
+    );
+  }
+
+  if (secret.length < 32) {
+    if (process.env.NODE_ENV === 'production') {
+      throw new Error('MFA_SECRET_ENCRYPTION_KEY must be at least 32 characters in production');
+    }
+    console.warn(
+      'WARNING: MFA_SECRET_ENCRYPTION_KEY is less than 32 characters. Use a stronger key in production.'
+    );
+  }
+
+  return secret;
+}
+
+/**
  * The refresh cookie must never travel over plain HTTP. Development and test
  * stay env-driven (`COOKIE_SECURE` unset/false keeps cookies usable locally);
  * production is forced secure so an unset or `false` value cannot silently
@@ -332,6 +414,59 @@ export const env = {
     0,
     24 * 60 * 60
   ),
+  /**
+   * AES-256-GCM key source for TOTP secrets stored in `user_mfa`. The actual
+   * 32-byte key is `sha256(RAW)` computed in `crypto/aesGcm.ts`.
+   */
+  MFA_SECRET_ENCRYPTION_KEY: validateMfaEncryptionKey(),
+  /**
+   * Lifetime of a single-use login challenge. Long enough to enter a code
+   * after the password step; short enough that a leaked challenge token is
+   * useless almost immediately. In the middle of a second-factor attempt the
+   * challenge is consumed on success and left to expire on failure (retries
+   * are bounded by the per-challenge limiter, not by re-reading this).
+   */
+  MFA_CHALLENGE_TTL_MINUTES: resolveBoundedInt(
+    'MFA_CHALLENGE_TTL_MINUTES',
+    process.env.MFA_CHALLENGE_TTL_MINUTES,
+    10,
+    1,
+    30
+  ),
+  /**
+   * Lifetime of a *pending* enrollment: a `user_mfa` row with
+   * `setupStartedAt` set and `enabledAt` null. If the confirming code does not
+   * arrive inside this window the pending secret is refused and the user must
+   * start setup again. Kept at 10 minutes; a TOTP token step is 30s, so this
+   * allows a whole cycle of code entries without letting a half-finished
+   * enrollment linger indefinitely.
+   */
+  MFA_SETUP_TTL_MINUTES: resolveBoundedInt(
+    'MFA_SETUP_TTL_MINUTES',
+    process.env.MFA_SETUP_TTL_MINUTES,
+    10,
+    1,
+    1440
+  ),
+  /**
+   * How many 30-second steps either side of the current one are accepted when
+   * verifying a TOTP code. `1` is the common trade-off: it tolerates the clock
+   * skew a normal device can produce and gives 3 valid codes per instant for a
+   * legitimate user, while the per-challenge limiter keeps a code guesser
+   * unpopular.
+   */
+  MFA_TOTP_WINDOW: resolveBoundedInt(
+    'MFA_TOTP_WINDOW',
+    process.env.MFA_TOTP_WINDOW,
+    1,
+    0,
+    3
+  ),
+  /**
+   * `issuer` parameter in the `otpauth://` URI the client renders into a QR
+   * code. Displayed by authenticator apps next to the account.
+   */
+  MFA_ISSUER: (process.env.MFA_ISSUER || 'WealthHabit').trim(),
   isDevelopment: process.env.NODE_ENV === 'development',
   isProduction: process.env.NODE_ENV === 'production',
 };

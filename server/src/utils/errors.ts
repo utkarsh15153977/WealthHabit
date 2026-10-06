@@ -22,6 +22,10 @@ export class AppError extends Error {
     return new AppError(message, 401, undefined, code);
   }
 
+  static conflict(message = 'Conflict', code?: string) {
+    return new AppError(message, 409, undefined, code);
+  }
+
   static forbidden(message = 'Forbidden', code?: string) {
     return new AppError(message, 403, undefined, code);
   }

@@ -11,6 +11,15 @@ import {
   forgotPassword,
   resetPassword,
 } from '../controllers/authController.js';
+import {
+  mfaSetup,
+  mfaEnable,
+  mfaDisable,
+  mfaRegenerateCodes,
+  mfaChallenge,
+  mfaRecovery,
+  mfaStatus,
+} from '../controllers/mfaController.js';
 import { validate } from '../middleware/validate.js';
 import { authenticate } from '../middleware/authMiddleware.js';
 import {
@@ -24,6 +33,13 @@ import {
   resendVerificationSchema,
   forgotPasswordSchema,
   resetPasswordSchema,
+  mfaSetupSchema,
+  mfaEnableSchema,
+  mfaDisableSchema,
+  mfaRegenerateSchema,
+  mfaChallengeSchema,
+  mfaRecoverySchema,
+  mfaStatusSchema,
 } from '../schemas/authSchemas.js';
 import {
   authRateLimit,
@@ -31,6 +47,8 @@ import {
   resendVerificationRateLimit,
   forgotPasswordRateLimit,
   resetPasswordRateLimit,
+  mfaManageRateLimit,
+  mfaChallengeRateLimit,
 } from '../middleware/rateLimit.js';
 import { asyncHandler } from '../middleware/asyncHandler.js';
 
@@ -76,6 +94,46 @@ router.post(
   authRateLimit,
   validate(resetPasswordSchema),
   asyncHandler(resetPassword)
+);
+
+// Two-factor authentication.
+//
+// The four authenticated endpoints re-authenticate with the account password
+// (and, when a valid code is required, the current TOTP code) inside the
+// service, so they get the per-account MFA limiter mounted AFTER `authenticate`
+// — keyed by user id + IP — to bound configuration churn without touching
+// anonymous traffic.
+//
+// `challenge` and `recovery` are unauthenticated by necessity and share ONE
+// per-challenge-token limiter instance: since the two endpoints are mounted on
+// the same bucket, alternating between them cannot double the code-guess
+// budget. The bucket key derives from the challenge token, so it cannot be
+// inflated by a caller without one; both limiter mount before validation, so a
+// malformed body costs the same as a wrong code.
+router.post('/2fa/setup', authenticate, mfaManageRateLimit, validate(mfaSetupSchema), asyncHandler(mfaSetup));
+router.post('/2fa/enable', authenticate, mfaManageRateLimit, validate(mfaEnableSchema), asyncHandler(mfaEnable));
+router.post('/2fa/disable', authenticate, mfaManageRateLimit, validate(mfaDisableSchema), asyncHandler(mfaDisable));
+router.get('/2fa/status', authenticate, authRateLimit, validate(mfaStatusSchema), asyncHandler(mfaStatus));
+router.post(
+  '/2fa/recovery-codes/regenerate',
+  authenticate,
+  mfaManageRateLimit,
+  validate(mfaRegenerateSchema),
+  asyncHandler(mfaRegenerateCodes)
+);
+router.post(
+  '/2fa/challenge',
+  mfaChallengeRateLimit,
+  authRateLimit,
+  validate(mfaChallengeSchema),
+  asyncHandler(mfaChallenge)
+);
+router.post(
+  '/2fa/recovery',
+  mfaChallengeRateLimit,
+  authRateLimit,
+  validate(mfaRecoverySchema),
+  asyncHandler(mfaRecovery)
 );
 
 export default router;

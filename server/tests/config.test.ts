@@ -34,13 +34,32 @@ function templateAssignments(contents: string): string {
  */
 const GENERATED_LOOKING_SECRET = 'k3JtQ8vXpZ1sWn7bYd4LhR2tF6jG0uC9aM5eI3oV8xQ1zN7c';
 
+/**
+ * Test-only stand-in for the configured MFA AES encryption key material.
+ * Generated-shaped (base64url alphabet, high entropy, well over 32
+ * characters) so it exercises the "sufficiently random long key" path without
+ * tripping the placeholder or minimum-length rules. It is not a secret and
+ * must never be used outside tests.
+ */
+const GENERATED_LOOKING_MFA_KEY = 'M7kPq2vXcN8wRtY5bH3jL0zF6dS9aG1uE4iK6oP2wV8cX4bD';
+
 describe('Config Validation', () => {
   const originalEnv = { ...process.env };
 
+  /**
+   * `MFA_SECRET_ENCRYPTION_KEY` is required in production (fail-closed, like
+   * `JWT_ACCESS_SECRET`). Tests below that simulate `NODE_ENV=production` to
+   * exercise some *other* setting must therefore provide a valid key or the
+   * config module aborts before the assertion under test runs. Seeding a
+   * deterministic, test-only value here makes that the default so unrelated
+   * production-simulation tests pass, while the MFA-specific tests below still
+   * delete/replace the variable to assert the real fail-closed behaviour.
+   */
   beforeEach(() => {
     vi.resetModules();
     process.env = { ...originalEnv };
     process.env.NODE_ENV = 'development';
+    process.env.MFA_SECRET_ENCRYPTION_KEY = GENERATED_LOOKING_MFA_KEY;
   });
 
   afterEach(() => {
@@ -180,6 +199,152 @@ describe('Config Validation', () => {
       // message regardless of how short the placeholder happens to be.
       await expect(import('../src/config/index.js')).rejects.toThrow(
         'JWT_ACCESS_SECRET is still the placeholder value'
+      );
+    });
+  });
+
+  describe('MFA_SECRET_ENCRYPTION_KEY validation', () => {
+    it('should use development fallback when not set in development', async () => {
+      delete process.env.MFA_SECRET_ENCRYPTION_KEY;
+      process.env.NODE_ENV = 'development';
+
+      const { env } = await import('../src/config/index.js');
+      expect(env.MFA_SECRET_ENCRYPTION_KEY).toBe(
+        'dev-mfa-encryption-key-change-in-production'
+      );
+    });
+
+    it('should throw when not set in production', async () => {
+      delete process.env.MFA_SECRET_ENCRYPTION_KEY;
+      process.env.JWT_ACCESS_SECRET = 'a'.repeat(32);
+      process.env.NODE_ENV = 'production';
+
+      await expect(import('../src/config/index.js')).rejects.toThrow(
+        'MFA_SECRET_ENCRYPTION_KEY must be set in production'
+      );
+    });
+
+    it('should throw when too short in production', async () => {
+      process.env.MFA_SECRET_ENCRYPTION_KEY = 'short';
+      process.env.JWT_ACCESS_SECRET = 'a'.repeat(32);
+      process.env.NODE_ENV = 'production';
+
+      await expect(import('../src/config/index.js')).rejects.toThrow(
+        'MFA_SECRET_ENCRYPTION_KEY must be at least 32 characters in production'
+      );
+    });
+
+    it('should throw when using dev default in production', async () => {
+      process.env.MFA_SECRET_ENCRYPTION_KEY =
+        'dev-mfa-encryption-key-change-in-production';
+      process.env.JWT_ACCESS_SECRET = 'a'.repeat(32);
+      process.env.NODE_ENV = 'production';
+
+      await expect(import('../src/config/index.js')).rejects.toThrow(
+        'MFA_SECRET_ENCRYPTION_KEY cannot be the default development value in production'
+      );
+    });
+
+    it('should accept a valid key in production', async () => {
+      process.env.JWT_ACCESS_SECRET = GENERATED_LOOKING_SECRET;
+      process.env.NODE_ENV = 'production';
+
+      const { env } = await import('../src/config/index.js');
+      expect(env.MFA_SECRET_ENCRYPTION_KEY).toBe(GENERATED_LOOKING_MFA_KEY);
+    });
+
+    it('should warn but accept a short key in development', async () => {
+      process.env.MFA_SECRET_ENCRYPTION_KEY = 'short';
+      process.env.NODE_ENV = 'development';
+
+      const consoleWarnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      const { env } = await import('../src/config/index.js');
+      expect(env.MFA_SECRET_ENCRYPTION_KEY).toBe('short');
+      expect(consoleWarnSpy).toHaveBeenCalledWith(
+        expect.stringContaining('MFA_SECRET_ENCRYPTION_KEY is less than 32 characters')
+      );
+      consoleWarnSpy.mockRestore();
+    });
+
+    it('should throw in production for the placeholder shipped in .env.production.example', async () => {
+      const template = readTemplate('../.env.production.example');
+      const placeholder = templateValue(template, 'MFA_SECRET_ENCRYPTION_KEY');
+
+      // Same sanity guard as the JWT contract test: the placeholder must be long
+      // enough that only the placeholder check (not the length check) can reject it.
+      expect(placeholder.length).toBeGreaterThanOrEqual(32);
+
+      process.env.MFA_SECRET_ENCRYPTION_KEY = placeholder;
+      process.env.JWT_ACCESS_SECRET = 'a'.repeat(32);
+      process.env.NODE_ENV = 'production';
+
+      await expect(import('../src/config/index.js')).rejects.toThrow(
+        'MFA_SECRET_ENCRYPTION_KEY is still the placeholder value from server/.env.production.example'
+      );
+    });
+
+    it('should reject near-variants of the published MFA placeholder in production', async () => {
+      process.env.JWT_ACCESS_SECRET = 'a'.repeat(32);
+      process.env.NODE_ENV = 'production';
+
+      for (const variant of [
+        'REPLACE-WITH-AT-LEAST-32-RANDOM-CHARACTERS-FROM-A-SECRET-STORE',
+        '  replace-with-at-least-32-random-characters-from-a-secret-store  ',
+        'replace_with_at_least_32_random_characters_from_a_secret_store',
+        'replace-with-some-other-long-placeholder-value-here',
+        'change-me-before-production-please-0123456789',
+        'your-mfa-secret-must-be-replaced-before-production-1234',
+      ]) {
+        vi.resetModules();
+        process.env.MFA_SECRET_ENCRYPTION_KEY = variant;
+
+        await expect(import('../src/config/index.js')).rejects.toThrow(
+          'MFA_SECRET_ENCRYPTION_KEY is still the placeholder value'
+        );
+      }
+    });
+
+    it('should warn but accept a placeholder in development', async () => {
+      process.env.MFA_SECRET_ENCRYPTION_KEY =
+        'replace-with-at-least-32-random-characters-from-a-secret-store';
+      process.env.NODE_ENV = 'development';
+
+      const consoleWarnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      const { env } = await import('../src/config/index.js');
+
+      expect(env.MFA_SECRET_ENCRYPTION_KEY).toBe(
+        'replace-with-at-least-32-random-characters-from-a-secret-store'
+      );
+      expect(consoleWarnSpy).toHaveBeenCalledWith(
+        expect.stringContaining('MFA_SECRET_ENCRYPTION_KEY looks like a template placeholder')
+      );
+      consoleWarnSpy.mockRestore();
+    });
+
+    it('should accept a sufficiently random long key in production', async () => {
+      process.env.JWT_ACCESS_SECRET = GENERATED_LOOKING_SECRET;
+      process.env.NODE_ENV = 'production';
+
+      const consoleWarnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      const { env } = await import('../src/config/index.js');
+
+      expect(env.MFA_SECRET_ENCRYPTION_KEY).toBe(GENERATED_LOOKING_MFA_KEY);
+      // A real generated key must not be flagged by any MFA-related rule.
+      expect(consoleWarnSpy).not.toHaveBeenCalledWith(
+        expect.stringContaining('MFA_SECRET_ENCRYPTION_KEY')
+      );
+      consoleWarnSpy.mockRestore();
+    });
+
+    it('should reject a short placeholder with the placeholder error, not the length error', async () => {
+      process.env.MFA_SECRET_ENCRYPTION_KEY = 'replace-with-me';
+      process.env.JWT_ACCESS_SECRET = 'a'.repeat(32);
+      process.env.NODE_ENV = 'production';
+
+      // The placeholder check runs first so the operator gets the actionable
+      // message regardless of how short the placeholder happens to be.
+      await expect(import('../src/config/index.js')).rejects.toThrow(
+        'MFA_SECRET_ENCRYPTION_KEY is still the placeholder value'
       );
     });
   });

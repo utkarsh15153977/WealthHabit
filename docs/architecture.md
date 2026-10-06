@@ -1499,6 +1499,184 @@ either flow to reach a real mailbox. See `server/.env.production.example`.
   verification pair: they are reached without a session and legitimately answer
   400 when a link is stale.
 
+## Two-Factor Authentication (Phase 6C)
+
+### Goal and non-goals
+
+Adds TOTP two-factor authentication with single-use recovery codes, mirroring the
+existing auth primitives instead of introducing new machinery: it reuses
+`AuthToken` (via `AuthTokenType.MFA_CHALLENGE`), the Argon2id password hashing in
+`authService`, the session-revocation helpers, the audit-log writer, and the
+shared rate-limit middleware.
+
+Out of scope, deliberately: SMS/email one-time passwords, WebAuthn/passkeys,
+"remember this device" 2FA skip, a factor-escalation ladder, and any change to
+the JWT scheme. A 15-minute stateless access token issued just before 2FA is
+enabled stays valid until it expires — the same inherited limitation documented
+in Password Reset.
+
+### Migration (`add_totp_2fa`)
+
+- `ALTER TYPE "AuthTokenType" ADD VALUE 'MFA_CHALLENGE'`.
+- `user_mfa` (`userId` PK/FK, `secretEncrypted`, `setupStartedAt`, `enabledAt`) —
+  **encrypted** secret, never the base32 plaintext.
+- `recovery_codes` (`id`, `userId`, `codeHash`, `usedAt`) — every code stored as
+  a `sha256` digest, no plaintext ever persisted.
+
+### Primitives
+
+- **TOTP** via `otplib`'s authenticator, 30-second step, code `^[0-9]{6}$`.
+  Verification accepts the current step plus `MFA_TOTP_WINDOW` (default 1) steps
+  either side, i.e. three valid codes per instant for a legitimate user.
+- **Secret**: 20 bytes from `crypto.randomBytes` → 32 base32 characters,
+  encrypted with AES-256-GCM (`aesGcm.ts`, key = `sha256` of
+  `MFA_SECRET_ENCRYPTION_KEY`). The plaintext leaves the server exactly once,
+  inside the `otpauth://` URI returned at setup. `MFA_ISSUER` (default
+  `WealthHabit`) becomes the `issuer` of the URI.
+- **Recovery codes**: 10 strings of 12 characters from
+  `ABCDEFGHJKLMNPQRSTUVWXYZ23456789` (no `I/L/O/0/1`), displayed
+  `XXXX-XXXX-XXXX`, accepted case-insensitively and de-punctuated on input.
+- **Login challenges**: per-account, single-use `MFA_CHALLENGE` tokens whose
+  `sha256` is stored; TTL `MFA_CHALLENGE_TTL_MINUTES` (default 10, range 1..30).
+
+### Enrollment
+
+1. `POST /api/auth/2fa/setup` (authenticated, `{ password }`): verifies the
+   Argon2id hash, generates a secret, and upserts the `user_mfa` row in the
+   *pending* state (a previous pending row is replaced with a new secret and a
+   fresh clock). Returns `{ secret, otpauthUri, expiresAt }`. A pending row
+   under `MFA_SETUP_TTL_MINUTES` (default 10) counts as "setup in progress"; a
+   row past that window is refused as `MFA_SETUP_EXPIRED` and the user starts
+   over.
+2. `POST /api/auth/2fa/enable` (authenticated, `{ code }`): under the `users`
+   row lock, refuses if already enabled (`MFA_ALREADY_ENABLED`) or not pending
+   (`MFA_SETUP_REQUIRED`), verifies the code against the decrypted secret, flips
+   `enabledAt`, writes the 10 recovery codes, revokes every session **except**
+   the one executing the change (a request with no live refresh cookie revokes
+   all), revokes outstanding `MFA_CHALLENGE` tokens, and writes the
+   `MFA_ENABLED` audit row.
+
+Concurrent enables for the same account cannot both win: the loser observes
+`enabledAt` under the same lock and gets `MFA_ALREADY_ENABLED`. Revocation
+happens inside this same transaction, so a configuration change cannot be undone
+by a session minted before it.
+
+`POST /api/auth/2fa/disable` (`{ password, code }`) and `POST
+/api/auth/2fa/recovery-codes/regenerate` (`{ password, code }`) follow the same
+shape — password + live TOTP code verified inside the transaction under the row
+lock. Regenerate retires unused old codes en masse (`usedAt` set, history
+preserved) and inserts a fresh set of 10, returned in plaintext exactly once.
+`GET /api/auth/2fa/status` returns `{ twoFactorEnabled, setupPending }` for the
+client security card.
+
+### Login challenge
+
+When an `ACTIVE` account has 2FA enabled, `POST /api/auth/login` returns
+`200` with `{ requiresTwoFactor: true, challengeToken, expiresInSeconds }` and
+creates **no session** and sets **no cookie**. `createLoginChallenge` runs under
+the row lock, revokes every prior challenge, mints one new token, and writes
+`MFA_LOGIN_CHALLENGE_CREATED`.
+
+The client then calls either `POST /2fa/challenge` (`{ challengeToken, code }`)
+or `POST /2fa/recovery` (`{ challengeToken, recoveryCode }`). Success consumes
+the challenge, re-checks the account and 2FA state, creates a session, sets the
+refresh cookie, writes `MFA_LOGIN_SUCCESS` / `MFA_RECOVERY_CODE_USED`, and
+returns the same `{ user, accessToken }` shape as a normal login.
+
+### Oracle protection
+
+The challenge and recovery endpoints return **one** status/body/message —
+`400 MFA_CHALLENGE_INVALID` — for a wrong code, an unknown/used/expired/
+wrong-type token, an account whose 2FA is off, and every race that lost to a
+concurrent request. Schemas are `.strict()` and validate the token for presence
+and length only, so a malformed value gets the same generic rejection rather
+than a distinguishable validation error. Audit rows are written only for genuine
+tokens: `MFA_LOGIN_FAILED` covers a real token whose code did not verify or an
+account no longer enabled; random guesses cost one limiter increment and nothing
+in the audit log.
+
+Both endpoints share **one** `mfaChallengeRateLimit` instance, keyed by
+challenge token + IP and mounted **before** validation, so alternating between
+the two endpoints cannot double the code-guess budget and a malformed body costs
+the same as a wrong code. The key derives from the token itself, so the bucket
+cannot be inflated by a caller without one. Challenges supersede each other, so
+an older token is useless before it even expires.
+
+### Abuse control
+
+| Control | Value | Key |
+| --- | --- | --- |
+| `mfaManageRateLimit` | 20 dev / 5 prod per 15 min | user id + IP (mounted **after** `authenticate`) |
+| `mfaChallengeRateLimit` | default per-token/IP budget, shared by both completion endpoints | challenge token + trusted IP |
+| Re-authentication | password (setup/disable/regenerate) and live TOTP (enable/disable/regenerate) | verified inside the service |
+
+The manage limiter is keyed by a *known* user because it is mounted after
+`authenticate`; configuration churn is bounded without spending anonymous
+budget. A password that fails to verify inside an authenticated request returns
+`400 PASSWORD_UNVERIFIED` (deliberately **not** 401), so the client does not
+mistake a re-authentication failure for a lost session.
+
+### Atomicity
+
+Enrollment, enable, disable, regenerate and challenge issuance all take the
+`users` `FOR UPDATE` lock, serializing the read-check-write cycles per account.
+The recovery-code login is a compare-and-set chain: consume the challenge
+(atomic, single-winner) → re-check the account → `UPDATE recovery_codes SET
+"usedAt" = now() WHERE "codeHash" = … AND "usedAt" IS NULL`. If the update
+matches no row the transaction rolls back, leaving both the challenge usable and
+the code unspent; lock timeouts surface as the generic `MFA_CHALLENGE_INVALID`.
+
+### Endpoints
+
+| Method | Path | Body | Notes |
+| --- | --- | --- | --- |
+| `POST` | `/api/auth/2fa/setup` | `{ password }` | Authenticated. Returns `{ secret, otpauthUri, expiresAt }`. |
+| `POST` | `/api/auth/2fa/enable` | `{ code }` | Authenticated. Returns `{ recoveryCodes }`, plaintext once. |
+| `POST` | `/api/auth/2fa/disable` | `{ password, code }` | Authenticated. Returns `{ message }`. |
+| `POST` | `/api/auth/2fa/recovery-codes/regenerate` | `{ password, code }` | Authenticated. Returns `{ recoveryCodes }`, plaintext once. |
+| `GET` | `/api/auth/2fa/status` | — | Authenticated. Returns `{ twoFactorEnabled, setupPending }`. |
+| `POST` | `/api/auth/2fa/challenge` | `{ challengeToken, code }` | Unauthenticated. Returns `{ user, accessToken }` + refresh cookie. |
+| `POST` | `/api/auth/2fa/recovery` | `{ challengeToken, recoveryCode }` | Unauthenticated. Returns `{ user, accessToken }` + refresh cookie. |
+
+### Audit trail
+
+`MFA_SETUP_STARTED`, `MFA_ENABLED`, `MFA_DISABLED`,
+`MFA_RECOVERY_CODES_REGENERATED` (with `supersededCodes`), `MFA_LOGIN_CHALLENGE_CREATED`,
+`MFA_LOGIN_SUCCESS`, `MFA_LOGIN_FAILED`, `MFA_RECOVERY_CODE_USED`. No metadata
+ever contains a TOTP secret, an `otpauth://` URI, a raw or hashed challenge
+token, or any recovery-code form (plaintext or digest).
+
+### Client flow
+
+- `Login` is two-step: when `login` resolves `requiresTwoFactor`, the same page
+  swaps to a challenge form (TOTP code, or a recovery code via a toggle). Both
+  completions go through the auth context (`completeTwoFactorChallenge` /
+  `completeTwoFactorRecovery`), which persist the returned session exactly like
+  a normal login.
+- `Profile` gains a `TwoFactorSecurity` card backed by `GET /2fa/status`: Turn on
+  → password → QR (`qrcode.react`) → verify → show recovery codes once; Turn off
+  and Regenerate re-authenticate with password + code. The codes step is the
+  only place the plaintext is ever visible.
+- `api.ts` lists `/auth/2fa/challenge` and `/auth/2fa/recovery` in
+  `NO_REFRESH_URLS`, for the same reason as the verification/reset pairs: they
+  are reached without a session and legitimately answer `400` when a challenge
+  is stale — a refresh attempt would just clear a healthy session's access token.
+- `error.ts` maps `PASSWORD_UNVERIFIED` and the `MFA_*` codes to friendly copy.
+  The authenticated-management failures are `400`s, so the response interceptor
+  does not treat them as session failures.
+
+### Deployment
+
+`server/.env.production.example` documents `MFA_SECRET_ENCRYPTION_KEY` (required
+in production; an unset value, the development default, or the template
+placeholder all refuse startup), plus the optional policies `MFA_TOTP_WINDOW`,
+`MFA_SETUP_TTL_MINUTES`, `MFA_CHALLENGE_TTL_MINUTES` and `MFA_ISSUER`.
+
+**Known limitation**: enabling or disabling 2FA revokes every *session*, but an
+access token minted before the change remains valid until its 15-minute expiry —
+the same inherited JWT limitation as password reset. There is no SMS fallback;
+recovery codes are the sole backup.
+
 ## Design Principles
 
 - Separation of concerns

@@ -25,6 +25,28 @@ export const AuditActions = {
    * oracle for token guessing.
    */
   PASSWORD_RESET_FAILED: 'PASSWORD_RESET_FAILED',
+  /**
+   * A pending enrollment was minted (secret issued, not yet confirmed).
+   * Written only for a real, eligible, authenticated account; it carries
+   * expiry metadata and never the secret or the otpauth URI.
+   */
+  MFA_SETUP_STARTED: 'MFA_SETUP_STARTED',
+  /**
+   * The confirming TOTP code matched and the secret went live. `actorUserId`
+   * is the authenticated account owner.
+   */
+  MFA_ENABLED: 'MFA_ENABLED',
+  /**
+   * A successful password step produced a short-lived single-use login
+   * challenge for an account with 2FA enabled. The two same-shaped events
+   * below mark positive and negative outcomes of answering it.
+   */
+  MFA_LOGIN_CHALLENGE_CREATED: 'MFA_LOGIN_CHALLENGE_CREATED',
+  MFA_LOGIN_SUCCESS: 'MFA_LOGIN_SUCCESS',
+  MFA_LOGIN_FAILED: 'MFA_LOGIN_FAILED',
+  MFA_RECOVERY_CODE_USED: 'MFA_RECOVERY_CODE_USED',
+  MFA_RECOVERY_CODES_REGENERATED: 'MFA_RECOVERY_CODES_REGENERATED',
+  MFA_DISABLED: 'MFA_DISABLED',
 } as const;
 
 export type AuditAction = (typeof AuditActions)[keyof typeof AuditActions];

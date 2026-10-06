@@ -104,3 +104,71 @@ export type VerifyEmailInput = z.infer<typeof verifyEmailSchema.shape.body>;
 export type ResendVerificationInput = z.infer<typeof resendVerificationSchema.shape.body>;
 export type ForgotPasswordInput = z.infer<typeof forgotPasswordSchema.shape.body>;
 export type ResetPasswordInput = z.infer<typeof resetPasswordSchema.shape.body>;
+
+/**
+ * Shared by the authenticated enrollment/removal endpoints. The body is strict
+ * so no unexpected field can smuggle in, and the re-authentication password is
+ * validated only for presence — the policy is the same shared password policy,
+ * but a stale minimum would reject nothing a long-time user could not type.
+ */
+const mfaCurrentPassword = passwordPolicy;
+
+/**
+ * A TOTP code is six decimal digits. Anything else fails validation with a
+ * distinguishable 400; codes are high-entropy, single-window values, so this
+ * does not open an oracle.
+ */
+const otpCode = z.string().regex(/^\d{6}$/, 'Authenticator code must be 6 digits');
+
+/**
+ * Strict on the same anti-probing principle as the reset token schemas: the
+ * challenge token is checked for presence and length only, never shape, so a
+ * malformed value produces the generic invalid challenge rather than a
+ * distinguishable validation error.
+ */
+const challengeToken = z
+  .string()
+  .trim()
+  .min(1, 'Challenge token is required')
+  .max(512, 'Challenge token is invalid');
+
+/**
+ * Recovery codes are 12 alphabet symbols shown as XXXX-XXXX-XXXX; the service
+ * accepts any casing and any punctuation and normalizes before hashing, so the
+ * schema only bounds length.
+ */
+const recoveryCode = z.string().trim().min(1, 'Recovery code is required').max(64, 'Recovery code is invalid');
+
+export const mfaSetupSchema = z.object({
+  body: z.object({ password: mfaCurrentPassword }).strict(),
+});
+
+export const mfaEnableSchema = z.object({
+  body: z.object({ code: otpCode }).strict(),
+});
+
+export const mfaDisableSchema = z.object({
+  body: z.object({ password: mfaCurrentPassword, code: otpCode }).strict(),
+});
+
+export const mfaRegenerateSchema = z.object({
+  body: z.object({ password: mfaCurrentPassword, code: otpCode }).strict(),
+});
+
+export const mfaChallengeSchema = z.object({
+  body: z.object({ challengeToken, code: otpCode }).strict(),
+});
+
+export const mfaRecoverySchema = z.object({
+  body: z.object({ challengeToken, recoveryCode }).strict(),
+});
+
+/** No body — read-only state for the Profile security card. */
+export const mfaStatusSchema = z.object({});
+
+export type MfaSetupInput = z.infer<typeof mfaSetupSchema.shape.body>;
+export type MfaEnableInput = z.infer<typeof mfaEnableSchema.shape.body>;
+export type MfaDisableInput = z.infer<typeof mfaDisableSchema.shape.body>;
+export type MfaRegenerateInput = z.infer<typeof mfaRegenerateSchema.shape.body>;
+export type MfaChallengeInput = z.infer<typeof mfaChallengeSchema.shape.body>;
+export type MfaRecoveryInput = z.infer<typeof mfaRecoverySchema.shape.body>;

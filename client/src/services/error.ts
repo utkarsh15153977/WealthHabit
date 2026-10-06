@@ -9,6 +9,13 @@ interface ApiErrorBody {
 
 const CODE_MESSAGES: Record<string, string> = {
   INVALID_CREDENTIALS: 'Invalid email or password',
+  PASSWORD_UNVERIFIED: 'Your password could not be verified. Please try again',
+  MFA_ALREADY_ENABLED: 'Two-factor authentication is already enabled',
+  MFA_NOT_ENABLED: 'Two-factor authentication is not enabled',
+  MFA_SETUP_REQUIRED: 'Finish two-factor authentication setup first',
+  MFA_SETUP_EXPIRED: 'This two-factor setup has expired. Please start over',
+  MFA_CODE_INVALID: 'That authenticator code is invalid or has expired',
+  MFA_CHALLENGE_INVALID: 'This two-factor verification is invalid or has expired',
   ACCOUNT_SUSPENDED: 'Account suspended',
   ACCOUNT_DEACTIVATED: 'Account deactivated',
   EMAIL_EXISTS: 'An account with this email already exists',

@@ -14,6 +14,7 @@ import { useAuth } from '../context/useAuth';
 import { getMyProfile, updateMyProfile } from '../services/userApi';
 import { getApiErrorMessage } from '../services/error';
 import { Loading } from '../components/Loading';
+import { TwoFactorSecurity } from '../components/TwoFactorSecurity';
 import type { UserProfile } from '../types/user';
 
 const profileSchema = z.object({
@@ -317,6 +318,8 @@ export function Profile() {
             )}
           </div>
         </div>
+
+        <TwoFactorSecurity />
 
         <div className="card mt-6">
           <div className="card-body">

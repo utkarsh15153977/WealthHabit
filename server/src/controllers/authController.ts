@@ -10,6 +10,7 @@ import {
   ResetPasswordInput,
 } from '../schemas/authSchemas.js';
 import { authService } from '../services/authService.js';
+import { mfaService } from '../services/mfaService.js';
 import {
   emailVerificationMessages,
   emailVerificationService,
@@ -36,6 +37,7 @@ import { AuthErrorCodes } from '../types/auth.js';
 import {
   RegisterData,
   LoginData,
+  MfaChallengeData,
   RefreshData,
   MeData,
   LogoutData,
@@ -251,6 +253,23 @@ export async function login(
       throw new AppError('Account deactivated', 403, undefined, AuthErrorCodes.ACCOUNT_DEACTIVATED);
     }
     throw new AppError('Account not active', 403, undefined, AuthErrorCodes.ACCOUNT_SUSPENDED);
+  }
+
+  // Second factor required: stop here with a challenge, no session. The
+  // client exchanges `challengeToken` (plus a TOTP or recovery code) at
+  // /api/auth/2fa/challenge or /api/auth/2fa/recovery, which complete login.
+  const twoFactorState = await mfaService.getTwoFactorState(user.id);
+  if (twoFactorState.enabled) {
+    const { challengeToken, expiresInSeconds } = await mfaService.createLoginChallenge(user.id);
+
+    const data: MfaChallengeData = {
+      requiresTwoFactor: true,
+      challengeToken,
+      expiresInSeconds,
+    };
+
+    res.json({ success: true, data });
+    return;
   }
 
   const refreshToken = authService.generateRefreshToken();

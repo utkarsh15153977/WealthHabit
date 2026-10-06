@@ -4,6 +4,7 @@ import { AccountStatus } from '@prisma/client';
 import { env } from '../config/index.js';
 import { JwtPayload, AuthenticatedUser, AuthErrorCodes } from '../types/auth.js';
 import { findUserById, isUserActive } from '../services/prismaAuthService.js';
+import { authService } from '../services/authService.js';
 import { AppError } from '../utils/errors.js';
 
 export interface AuthenticatedRequest extends Request {
@@ -81,15 +82,7 @@ export const authenticate = async (
       throw new AppError('Account is not active', 403, undefined, AuthErrorCodes.ACCOUNT_SUSPENDED);
     }
 
-    req.user = {
-      id: user.id,
-      email: user.email,
-      firstName: user.firstName,
-      lastName: user.lastName,
-      role: user.role,
-      status: user.status,
-      emailVerified: user.emailVerifiedAt !== null,
-    };
+    req.user = authService.toAuthenticatedUser(user);
 
     next();
   } catch (err) {

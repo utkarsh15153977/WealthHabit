@@ -45,6 +45,49 @@ export const FORGOT_PASSWORD_RATE_LIMIT_MAX = env.isDevelopment ? 20 : 5;
 export const RESET_PASSWORD_RATE_LIMIT_MAX = env.isDevelopment ? 20 : 5;
 
 /**
+ * Budget for every authenticated MFA mutation (`/2fa/setup`, `/2fa/enable`,
+ * `/2fa/disable`, `/2fa/recovery-codes/regenerate`). These change the
+ * account's second-factor configuration and cost a database write plus, on
+ * enable/disable/regenerate, a full Argon2 verification, so the same magnitude
+ * as the other named limiters makes sense. Keyed on the authenticated user id +
+ * trusted client IP; the user id is the stable identifier even if the account
+ * address could change.
+ */
+export const MFA_MANAGE_RATE_LIMIT_MAX = env.isDevelopment ? 20 : 5;
+
+/**
+ * Budget for answering a login challenge (`/2fa/challenge` and
+ * `/2fa/recovery`). Keyed on the unguessable challenge token + trusted client
+ * IP, and deliberately shared by BOTH endpoints — a guesser must not be able to
+ * alternate between two separately-bucketed routes to double their code
+ * guesses.
+ *
+ * Unlike the reset-password limiter (which must not be keyed per token because
+ * the token is the credential being brute-forced), here the thing being
+ * brute-forced is the 6-digit TOTP code, and the token merely scopes the
+ * attempt. A per-token bucket is therefore meaningful: each challenge permits a
+ * handful of guesses, and minting each challenge requires the password, itself
+ * bounded by `loginRateLimit`. The two together cap code-guessing volume, not
+ * just request volume.
+ */
+export const MFA_CHALLENGE_RATE_LIMIT_MAX = env.isDevelopment ? 20 : 5;
+
+/**
+ * Extracts the challenge token from the request body for use as a rate-limit
+ * key. Returns `undefined` when no usable token is present so the caller can
+ * fall back to an IP-only key instead of minting unbounded distinct keys.
+ */
+export function normalizeChallengeToken(body: unknown): string | undefined {
+  if (typeof body !== 'object' || body === null) return undefined;
+
+  const token = (body as { challengeToken?: unknown }).challengeToken;
+  if (typeof token !== 'string') return undefined;
+
+  const normalized = token.trim();
+  return normalized === '' ? undefined : normalized;
+}
+
+/**
  * Normalizes the submitted email exactly like the login path does
  * (`loginSchema` and `findUserByEmail` both apply `toLowerCase().trim()`), so
  * every casing/whitespace variant of one address shares a single bucket.
@@ -213,6 +256,60 @@ export const resetPasswordRateLimit = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   keyGenerator: (request) => ipKeyGenerator(request.ip ?? '', 56),
+});
+
+/**
+ * Limiter for authenticated MFA configuration endpoints, keyed by user id +
+ * trusted client IP. Mounted AFTER `authenticate` (the key needs `req.user`),
+ * so it binds repeated configuration churn on one account rather than
+ * anonymous traffic.
+ */
+export const mfaManageRateLimit = rateLimit({
+  windowMs,
+  max: MFA_MANAGE_RATE_LIMIT_MAX,
+  message: {
+    success: false,
+    error: {
+      code: 'RATE_LIMIT_EXCEEDED',
+      message: 'Too many requests, please try again later',
+    },
+  },
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (request) =>
+    buildScopedRateLimitKey(
+      'mfa-manage',
+      (request as { user?: { id?: string } }).user?.id,
+      ipKeyGenerator(request.ip ?? '', 56)
+    ),
+});
+
+/**
+ * Limiter shared by `POST /api/auth/2fa/challenge` and
+ * `POST /api/auth/2fa/recovery`. One instance mounted on both routes means one
+ * bucket per (challenge token, IP), so alternating between the two endpoints
+ * cannot double the code-guess budget. Mounted before schema validation:
+ * malformed bodies still spend the same per-token bucket, but the token key is
+ * only as guessable as the challenge token itself.
+ */
+export const mfaChallengeRateLimit = rateLimit({
+  windowMs,
+  max: MFA_CHALLENGE_RATE_LIMIT_MAX,
+  message: {
+    success: false,
+    error: {
+      code: 'RATE_LIMIT_EXCEEDED',
+      message: 'Too many requests, please try again later',
+    },
+  },
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (request) =>
+    buildScopedRateLimitKey(
+      'mfa-challenge',
+      normalizeChallengeToken(request.body),
+      ipKeyGenerator(request.ip ?? '', 56)
+    ),
 });
 
 export const apiRateLimit = rateLimit({

@@ -13,6 +13,7 @@ export async function findUserByEmail(email: string): Promise<User | null> {
 export async function findUserById(id: string): Promise<User | null> {
   return prisma.user.findUnique({
     where: { id },
+    include: { mfa: true },
   });
 }
 
@@ -49,9 +50,12 @@ export async function createSession(
   userId: string,
   refreshTokenHash: string,
   expiresAt: Date,
-  tokenFamilyId?: string
+  tokenFamilyId?: string,
+  client?: Prisma.TransactionClient
 ): Promise<Session> {
-  return prisma.session.create({
+  const executor = client ?? prisma;
+
+  return executor.session.create({
     data: {
       userId,
       refreshTokenHash,
@@ -136,6 +140,30 @@ export async function revokeAllUserSessions(
   return result.count;
 }
 
+/**
+ * Revokes every live session for a user except one that must survive — used
+ * when enabling or disabling 2FA so the session performing the change stays
+ * signed in while every other session (which may or may not have passed the
+ * second factor) is killed.
+ */
+export async function revokeAllUserSessionsExcept(
+  userId: string,
+  keepSessionId: string,
+  client?: Prisma.TransactionClient
+): Promise<number> {
+  const executor = client ?? prisma;
+
+  const result = await executor.session.updateMany({
+    where: {
+      userId,
+      id: { not: keepSessionId },
+      revokedAt: null,
+    },
+    data: { revokedAt: new Date() },
+  });
+  return result.count;
+}
+
 export async function updateLastLoginAt(userId: string): Promise<void> {
   await prisma.user.update({
     where: { id: userId },
@@ -150,6 +178,7 @@ export async function isUserActive(user: User): Promise<boolean> {
 export async function getAuthenticatedUser(userId: string): Promise<AuthenticatedUser | null> {
   const user = await prisma.user.findUnique({
     where: { id: userId },
+    include: { mfa: true },
   });
 
   if (!user) return null;
