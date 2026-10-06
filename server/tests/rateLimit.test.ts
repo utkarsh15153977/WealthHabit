@@ -11,11 +11,17 @@ import {
   loginRateLimit,
   RESEND_VERIFICATION_RATE_LIMIT_MAX,
   resendVerificationRateLimit,
+  forgotPasswordRateLimit,
+  resetPasswordRateLimit,
+  FORGOT_PASSWORD_RATE_LIMIT_MAX,
+  RESET_PASSWORD_RATE_LIMIT_MAX,
 } from '../src/middleware/rateLimit.js';
 
 const API_LIMIT = String(env.isDevelopment ? 500 : 100);
 const AUTH_LIMIT = String(env.isDevelopment ? 100 : 20);
 const RESEND_LIMIT = RESEND_VERIFICATION_RATE_LIMIT_MAX;
+const FORGOT_LIMIT = FORGOT_PASSWORD_RATE_LIMIT_MAX;
+const RESET_LIMIT = RESET_PASSWORD_RATE_LIMIT_MAX;
 
 const CLIENT_KEYS = ['127.0.0.1', '::1'].map((ip) => ipKeyGenerator(ip, 56));
 const NEVER_SEEN_KEY = ipKeyGenerator('203.0.113.200', 56);
@@ -134,6 +140,97 @@ describe('API rate limiting', () => {
 
     expect(limited).toBeDefined();
     expect(limited!.body.error.code).toBe('RATE_LIMIT_EXCEEDED');
+  });
+
+  it('enforces the forgot-password budget on (account, IP) before the general budget', async () => {
+    const email = `forgot-budget-${Date.now()}@example.com`;
+    let limited: request.Response | undefined;
+
+    for (let i = 0; i <= FORGOT_LIMIT; i++) {
+      const response = await request(app).post('/api/auth/forgot-password').send({ email });
+      if (response.status === 429) {
+        limited = response;
+        break;
+      }
+    }
+
+    expect(limited).toBeDefined();
+    expect(limited!.body.error.code).toBe('RATE_LIMIT_EXCEEDED');
+  });
+
+  it('enforces the reset-password budget before the handler runs', async () => {
+    let limited: request.Response | undefined;
+
+    for (let i = 0; i <= RESET_LIMIT; i++) {
+      const response = await request(app)
+        .post('/api/auth/reset-password')
+        .send({ token: 'a'.repeat(64), newPassword: 'ValidPassword123!' });
+      if (response.status === 429) {
+        limited = response;
+        break;
+      }
+    }
+
+    expect(limited).toBeDefined();
+    expect(limited!.body.error.code).toBe('RATE_LIMIT_EXCEEDED');
+  });
+});
+
+describe('password-reset limiter separation', () => {
+  it('spends the forgot-password budget identically for real and unknown addresses', async () => {
+    const key = buildScopedRateLimitKey(
+      'forgot-password',
+      'ghost@example.com',
+      ipKeyGenerator('127.0.0.1', 56)
+    );
+
+    // An address that does not exist still increments the counter, which is
+    // what stops a 429 from revealing whether an address is registered.
+    const unknown = await request(app)
+      .post('/api/auth/forgot-password')
+      .send({ email: 'ghost@example.com' });
+    const real = await request(app)
+      .post('/api/auth/forgot-password')
+      .send({ email: 'ghost@example.com' });
+
+    expect(unknown.status).toBe(real.status);
+    expect((await forgotPasswordRateLimit.getKey(key))?.totalHits).toBe(2);
+
+    forgotPasswordRateLimit.resetKey(key);
+  });
+
+  it('normalizes the address so casing variants share one budget', async () => {
+    const email = `forgot-casing-${Date.now()}@example.com`;
+    const key = buildScopedRateLimitKey(
+      'forgot-password',
+      email,
+      ipKeyGenerator('127.0.0.1', 56)
+    );
+
+    await request(app).post('/api/auth/forgot-password').send({ email });
+    await request(app).post('/api/auth/forgot-password').send({ email: email.toUpperCase() });
+
+    expect((await forgotPasswordRateLimit.getKey(key))?.totalHits).toBe(2);
+
+    forgotPasswordRateLimit.resetKey(key);
+  });
+
+  it('keys the reset limiter on the client IP alone, never on the token', async () => {
+    const clientKey = ipKeyGenerator('127.0.0.1', 56);
+    resetPasswordRateLimit.resetKey(clientKey);
+
+    await request(app)
+      .post('/api/auth/reset-password')
+      .send({ token: 'a'.repeat(64), newPassword: 'ValidPassword123!' });
+    await request(app)
+      .post('/api/auth/reset-password')
+      .send({ token: 'b'.repeat(64), newPassword: 'ValidPassword123!' });
+
+    // Two different tokens, one budget: an attacker cannot get more Argon2
+    // derivations by varying the token, which is the point of the IP-only key.
+    expect((await resetPasswordRateLimit.getKey(clientKey))?.totalHits).toBe(2);
+
+    resetPasswordRateLimit.resetKey(clientKey);
   });
 });
 

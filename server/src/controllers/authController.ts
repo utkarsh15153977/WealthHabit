@@ -6,12 +6,18 @@ import {
   LoginInput,
   ResendVerificationInput,
   VerifyEmailInput,
+  ForgotPasswordInput,
+  ResetPasswordInput,
 } from '../schemas/authSchemas.js';
 import { authService } from '../services/authService.js';
 import {
   emailVerificationMessages,
   emailVerificationService,
 } from '../services/emailVerificationService.js';
+import {
+  passwordResetMessages,
+  passwordResetService,
+} from '../services/passwordResetService.js';
 import {
   findUserByEmail,
   createUserWithProfile,
@@ -35,6 +41,8 @@ import {
   LogoutData,
   ResendVerificationData,
   VerifyEmailData,
+  ForgotPasswordData,
+  ResetPasswordData,
 } from '../types/auth.js';
 
 export async function register(
@@ -140,6 +148,71 @@ export async function resendVerification(
 
   const data: ResendVerificationData = {
     message: emailVerificationMessages.resend,
+  };
+
+  res.json({
+    success: true,
+    data,
+  });
+}
+
+/**
+ * Requests a password-reset email.
+ *
+ * The response is byte-identical for a real account, an unverified account, a
+ * suspended or deactivated account, an address inside its cooldown, an address
+ * that does not exist, and a mail-transport failure, and the body never mentions
+ * the outcome — so the endpoint cannot be used to enumerate accounts or to
+ * confirm that a guessed address is registered.
+ *
+ * Unauthenticated by necessity; the rate limiter is mounted ahead of this
+ * handler (and ahead of schema validation) so a probe flood is bounded before
+ * it reaches the database.
+ */
+export async function forgotPassword(
+  req: AuthenticatedRequest,
+  res: Response
+): Promise<void> {
+  const input = req.body as ForgotPasswordInput;
+
+  await passwordResetService.requestPasswordReset(input.email);
+
+  const data: ForgotPasswordData = {
+    message: passwordResetMessages.forgot,
+  };
+
+  res.json({
+    success: true,
+    data,
+  });
+}
+
+/**
+ * Consumes a reset token and installs the new password.
+ *
+ * Unauthenticated: the token in the request body is the only credential, and it
+ * is sent in the body rather than a query string so the live token never lands
+ * in the access log of this server or any proxy in front of it. Every unusable
+ * token — unknown, expired, already used, wrong type, or belonging to an
+ * ineligible account — produces the same status, code and message.
+ */
+export async function resetPassword(
+  req: AuthenticatedRequest,
+  res: Response
+): Promise<void> {
+  const input = req.body as ResetPasswordInput;
+
+  const result = await passwordResetService.resetPasswordWithToken(
+    input.token,
+    input.newPassword
+  );
+
+  if (!result.reset) {
+    throw passwordResetService.invalidPasswordResetLink();
+  }
+
+  const data: ResetPasswordData = {
+    message: passwordResetMessages.resetSuccess,
   };
 
   res.json({

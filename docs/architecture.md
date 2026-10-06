@@ -1323,6 +1323,182 @@ transport, a sender domain with SPF/DKIM/DMARC, and credentials. See
   session and legitimately answer 400 when a link is stale, so attempting a
   token refresh would be pointless and would clear a healthy access token.
 
+## Password Reset (Phase 6B)
+
+### Goal and non-goals
+
+Lets an account owner choose a new password from a single-use emailed link,
+without any new auth primitive. Reuses the existing `AuthToken` table,
+`AuthTokenType.PASSWORD_RESET`, the Argon2id hashing in `authService`, the
+`EmailTransport` abstraction built for email verification, the logout-all session
+mechanism, and the audit-log writer.
+
+Out of scope, deliberately: changing a password while signed in (no
+change-password endpoint exists yet), token-version/credential-stamp columns,
+and any change to the JWT scheme.
+
+**No Prisma migration is required.** `AuthTokenType.PASSWORD_RESET` already
+existed in the enum and `User.passwordHash` already exists; the reset reuses both
+unchanged.
+
+### Token lifecycle
+
+- 32 random bytes from `crypto.randomBytes`, hex-encoded, delivered only inside
+  the emailed link. `sha256(token)` is the only thing stored.
+- Consumed by the same single-statement `UPDATE … RETURNING` used by email
+  verification, with `"usedAt" IS NULL AND "expiresAt" > now()` **inside** the
+  predicate, so exactly one of N concurrent racers can ever win.
+- Default lifetime 30 minutes (`PASSWORD_RESET_TOKEN_TTL_MINUTES`, clamped
+  5..1440). Deliberately much shorter than the 24-hour verification link: this
+  link is a credential.
+- Requesting a new reset revokes every outstanding reset link for the account, so
+  an older link sitting in an inbox or a mail archive cannot be replayed. Applying
+  a reset does the same.
+- A token belonging to a non-`ACTIVE` account is consumed and refused, so a
+  suspended account cannot bank a valid link and use it if it is reinstated.
+
+### Endpoints
+
+| Method | Path | Body | Notes |
+| --- | --- | --- | --- |
+| `POST` | `/api/auth/forgot-password` | `{ email }` | Always `200` with one generic message. |
+| `POST` | `/api/auth/reset-password` | `{ token, newPassword }` | `200` on success, `400 PASSWORD_RESET_INVALID` for every unusable token. |
+
+Both schemas are `.strict()`, so `userId`, `emailVerifiedAt`, `usedAt` or any
+other field a caller might try to supply is rejected rather than ignored. The new
+password is held to one shared `passwordPolicy` (8–128 characters) that
+`registerSchema` also references, so registration and reset cannot drift apart.
+
+Consumption is `POST`-only and the token travels in the body, never a query
+string, so the live token never reaches morgan's access log or an intermediary's.
+The frontend link does carry the token in the address bar — that is inherent to
+clicking an emailed link — and hands it onward in the body.
+
+### Atomicity
+
+`resetPasswordWithToken` performs, in **one** transaction:
+
+1. consume the presented token (atomic compare-and-set),
+2. take the `users` row lock and re-check that the account is still `ACTIVE`,
+3. write the new `passwordHash`,
+4. revoke every session (`revokeAllUserSessions(userId, tx)` — the existing
+   logout-all mechanism, made transaction-aware),
+5. revoke every other outstanding reset link,
+6. write the `PASSWORD_RESET_COMPLETED` audit row.
+
+Committing them together *is* the security property. A partially applied reset
+would leave either a usable reset link after the password changed, or live
+sessions after it did.
+
+The Argon2id hash is computed **before** the transaction opens: it depends on
+nothing the transaction reads, and holding a row lock across a deliberately
+expensive key derivation would serialise every other operation on that user
+behind it.
+
+Lock order is `auth_tokens` → `users`, the mirror of issuance's
+`users` → `auth_tokens(insert)`. The two transactions never touch the same
+`auth_tokens` row, so they cannot form a cycle. Token inserts still go through
+the transaction client, because the FK check takes `FOR KEY SHARE` on the user
+row and would self-deadlock against the same operation's own `FOR UPDATE`.
+
+### Session invalidation
+
+Every session of the affected account is revoked in the same transaction, so
+`POST /auth/refresh` rejects each one with `TOKEN_REVOKED`. Other accounts are
+untouched.
+
+**Known limitation, inherited from the existing auth design**: access tokens are
+stateless 15-minute JWTs with no security-version claim, so a token issued just
+before the reset remains valid until it expires. Closing that window would
+require a credential-stamp/version column and a check on every authenticated
+request — a change to the JWT scheme that this feature deliberately does not
+make. Access-token lifetime remains the bound.
+
+### Anti-enumeration
+
+`POST /forgot-password` returns the same status, body and message for a real
+account, an unverified account, a suspended or deactivated account, an address
+inside its cooldown, an address that does not exist, and a transport failure.
+`POST /reset-password` returns one status, one code and one message for an
+unknown, expired, already-used, wrong-type token, or a token belonging to an
+ineligible account.
+
+The rate limiter is mounted **before** schema validation and before the account
+lookup, so a probe flood spends a counter increment rather than a database round
+trip and a 429 cannot distinguish a real account from a guess. The client mirrors
+this by displaying the server's message verbatim rather than second-guessing it.
+
+Residual, stated plainly: a real account performs more database work and
+dispatches mail, so response *time* still differs. Equalizing that would mean
+sending mail for addresses that do not exist. The limits below bound how much a
+timing signal is worth.
+
+### Abuse control
+
+| Control | Value | Key |
+| --- | --- | --- |
+| `forgotPasswordRateLimit` | 20 dev / 5 prod per 15 min | normalized email + trusted IP |
+| `resetPasswordRateLimit` | 20 dev / 5 prod per 15 min | trusted IP only |
+| Per-account cooldown | 300 s (`PASSWORD_RESET_REQUEST_COOLDOWN_SECONDS`, 0 disables) | most recent `PASSWORD_RESET` token |
+| Session-reuse detection | unchanged | — |
+
+The reset limiter is IP-only on purpose. It cannot be keyed per account — the
+owner is only known *after* the token is consumed — and it must not be keyed per
+token, because the token is unguessable and a per-token bucket would accomplish
+nothing. Its job is to bound the Argon2id derivation, the most expensive
+operation an unauthenticated caller can reach here, so it sits ahead of the
+handler.
+
+The in-memory limiter is process-local and resets on deploy; the cooldown is
+enforced durably in the database, which is why both exist.
+
+### Audit trail
+
+- `PASSWORD_RESET_REQUESTED` — written only when a link is genuinely minted for
+  a real, eligible account. Nothing is written for unknown or ineligible
+  addresses, so the audit trail is not itself an account-existence oracle.
+- `PASSWORD_RESET_COMPLETED` — `actorUserId` is the account owner, with
+  `revokedSessions` and `invalidatedLinks` counts.
+- `PASSWORD_RESET_FAILED` — a presented token matched a real reset token but
+  could not be applied (an ineligible account). **Attempts with tokens matching
+  nothing write no row**, because recording them would turn this endpoint into an
+  unbounded audit-log write amplifier for anyone guessing random values.
+
+No audit metadata ever contains a password, a hash, a raw token, a token hash or
+a reset link. The admin read API drops metadata keys matching
+`…token…/password/hash…`; the writes deliberately do not rely on that filter.
+
+### Delivery
+
+Reuses `emailService` verbatim — `sendPasswordResetEmail`, `buildPasswordResetUrl`
+and the same `EmailTransport` selection. There is no second mail system. Reset
+mail carries a text and HTML body, a single call-to-action link, single-use and
+expiry wording, a copy-the-link fallback, and an explicit "if you did not request
+this, your password has not changed" line. Delivery failures are reported, never
+thrown, because the token is already committed.
+
+**Deployment dependency**: unchanged from email verification — a real transport,
+a sender domain with SPF/DKIM/DMARC, and credentials are still required for
+either flow to reach a real mailbox. See `server/.env.production.example`.
+
+### Client flow
+
+- `/forgot-password` and `/reset-password` are public routes that are deliberately
+  **not** wrapped in `GuestRoute`: a signed-in user who has forgotten their
+  password must be able to reach them, and a tab whose session the server has just
+  revoked must not be redirected away from the form.
+- `Login` links "Forgot password?" to `/forgot-password` (previously `href="#"`).
+- `ResetPassword` reads the token from the link and keeps it out of every API
+  request except the `POST` body. It refuses to resubmit a token it has already
+  spent, so a re-render cannot replay a consumed link.
+- On success, if the tab held a session, the page calls the existing
+  `refreshSession()` once. It fails against the just-revoked session and clears
+  the stored access token and user, so no stale auth state survives the reset. No
+  new auth-context surface is added.
+- Both endpoints are listed in `NO_REFRESH_URLS` for the same reason as the
+  verification pair: they are reached without a session and legitimately answer
+  400 when a link is stale.
+
 ## Design Principles
 
 - Separation of concerns

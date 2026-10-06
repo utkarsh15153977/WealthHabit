@@ -26,6 +26,11 @@ const NO_REFRESH_URLS = [
   // a perfectly healthy session as a side effect.
   '/auth/verify-email',
   '/auth/resend-verification',
+  // Same reasoning as the verification pair: reached with no session, and a
+  // stale reset link legitimately answers 400 PASSWORD_RESET_INVALID, which a
+  // refresh attempt would turn into "clear this session's access token".
+  '/auth/forgot-password',
+  '/auth/reset-password',
 ];
 
 export function getAccessToken(): string | null {

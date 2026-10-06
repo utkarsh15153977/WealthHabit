@@ -54,6 +54,18 @@ export interface ResendVerificationData {
   message: string;
 }
 
+/**
+ * Always the same shape and message, whether or not an account exists, was
+ * eligible, was inside its cooldown, or the mail transport failed.
+ */
+export interface ForgotPasswordData {
+  message: string;
+}
+
+export interface ResetPasswordData {
+  message: string;
+}
+
 export interface AuthErrorResponse {
   success: false;
   error: {
@@ -68,6 +80,13 @@ export const AuthErrorCodes = {
   ACCOUNT_DEACTIVATED: 'ACCOUNT_DEACTIVATED',
   EMAIL_EXISTS: 'EMAIL_EXISTS',
   EMAIL_VERIFICATION_INVALID: 'EMAIL_VERIFICATION_INVALID',
+  /**
+   * The single rejection shared by every unusable reset link: unknown token,
+   * already-used token, expired token, wrong token type, or a token belonging
+   * to an account that is no longer eligible. One code and one message, so a
+   * caller cannot distinguish these cases.
+   */
+  PASSWORD_RESET_INVALID: 'PASSWORD_RESET_INVALID',
   VALIDATION_ERROR: 'VALIDATION_ERROR',
   TOKEN_EXPIRED: 'TOKEN_EXPIRED',
   TOKEN_INVALID: 'TOKEN_INVALID',

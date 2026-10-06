@@ -130,7 +130,7 @@ export function Login() {
                   <input type="checkbox" className="rounded border-border text-primary focus:ring-primary" />
                   <span className="text-sm text-text-muted">Remember me</span>
                 </label>
-                <Link to="#" className="text-sm text-primary hover:underline">Forgot password?</Link>
+                <Link to="/forgot-password" className="text-sm text-primary hover:underline">Forgot password?</Link>
               </div>
 
               <button

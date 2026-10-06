@@ -11,6 +11,20 @@ export const AuditActions = {
   EMAIL_VERIFICATION_RESENT: 'EMAIL_VERIFICATION_RESENT',
   EMAIL_VERIFIED: 'EMAIL_VERIFIED',
   EMAIL_VERIFICATION_FAILED: 'EMAIL_VERIFICATION_FAILED',
+  /**
+   * Written only when a reset email was genuinely issued to a real, eligible
+   * account. Nothing is written for unknown or ineligible addresses, so the
+   * audit trail is itself not an account-existence oracle.
+   */
+  PASSWORD_RESET_REQUESTED: 'PASSWORD_RESET_REQUESTED',
+  PASSWORD_RESET_COMPLETED: 'PASSWORD_RESET_COMPLETED',
+  /**
+   * A presented token matched a real reset token but could not be applied —
+   * typically a suspended or deactivated account. Attempts with tokens that
+   * match nothing write no audit row, because recording them would build an
+   * oracle for token guessing.
+   */
+  PASSWORD_RESET_FAILED: 'PASSWORD_RESET_FAILED',
 } as const;
 
 export type AuditAction = (typeof AuditActions)[keyof typeof AuditActions];

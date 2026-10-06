@@ -8,6 +8,8 @@ import {
   me,
   verifyEmail,
   resendVerification,
+  forgotPassword,
+  resetPassword,
 } from '../controllers/authController.js';
 import { validate } from '../middleware/validate.js';
 import { authenticate } from '../middleware/authMiddleware.js';
@@ -20,11 +22,15 @@ import {
   meSchema,
   verifyEmailSchema,
   resendVerificationSchema,
+  forgotPasswordSchema,
+  resetPasswordSchema,
 } from '../schemas/authSchemas.js';
 import {
   authRateLimit,
   loginRateLimit,
   resendVerificationRateLimit,
+  forgotPasswordRateLimit,
+  resetPasswordRateLimit,
 } from '../middleware/rateLimit.js';
 import { asyncHandler } from '../middleware/asyncHandler.js';
 
@@ -48,6 +54,28 @@ router.post(
   authRateLimit,
   validate(resendVerificationSchema),
   asyncHandler(resendVerification)
+);
+
+// Password reset. `forgot-password` takes an attacker-chosen address, so it
+// gets the email+IP limiter mounted before validation and before the account
+// lookup — the budget is then spent identically whether or not the account
+// exists, which is what keeps a 429 from becoming an enumeration signal.
+// `reset-password` takes an unguessable token, so a per-account bucket would
+// only serve to lock a victim out of resetting their own password; it is keyed
+// on the client IP only, ahead of the handler, to bound the Argon2id derivation.
+router.post(
+  '/forgot-password',
+  forgotPasswordRateLimit,
+  authRateLimit,
+  validate(forgotPasswordSchema),
+  asyncHandler(forgotPassword)
+);
+router.post(
+  '/reset-password',
+  resetPasswordRateLimit,
+  authRateLimit,
+  validate(resetPasswordSchema),
+  asyncHandler(resetPassword)
 );
 
 export default router;

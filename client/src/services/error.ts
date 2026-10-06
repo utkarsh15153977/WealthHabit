@@ -13,6 +13,7 @@ const CODE_MESSAGES: Record<string, string> = {
   ACCOUNT_DEACTIVATED: 'Account deactivated',
   EMAIL_EXISTS: 'An account with this email already exists',
   EMAIL_VERIFICATION_INVALID: 'This verification link is invalid or has expired.',
+  PASSWORD_RESET_INVALID: 'This password reset link is invalid or has expired.',
   RATE_LIMIT_EXCEEDED: 'Too many requests, please try again later',
   VALIDATION_ERROR: 'Please check your input and try again',
   TOKEN_EXPIRED: 'Your session has expired. Please sign in again',
