@@ -1,10 +1,12 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { env } from '../src/config/index.js';
 import {
+  buildPasswordResetUrl,
   buildVerificationUrl,
   clearCapturedEmails,
   getCapturedEmails,
   MemoryEmailTransport,
+  sendPasswordResetEmail,
   sendVerificationEmail,
   setEmailTransport,
   type EmailMessage,
@@ -99,6 +101,105 @@ describe('verification email content', () => {
     const [message] = getCapturedEmails();
     expect(message.html).not.toContain('<img src=x');
     expect(message.html).toContain('&lt;img src=x');
+  });
+});
+
+describe('buildPasswordResetUrl', () => {
+  it('points at the client reset-password page and carries the token once', () => {
+    const url = buildPasswordResetUrl(RAW_TOKEN);
+
+    expect(url).toBe(`${env.CLIENT_URL.replace(/\/+$/, '')}/reset-password?token=${RAW_TOKEN}`);
+    expect(url.split('token=')).toHaveLength(2);
+  });
+
+  it('percent-encodes a token so it cannot break out of the query string', () => {
+    const url = buildPasswordResetUrl('abc&x=1');
+
+    expect(url).not.toContain('abc&x=1');
+    expect(url).toContain('token=abc%26x%3D1');
+  });
+});
+
+describe('password reset email content', () => {
+  it('captures the message in memory when the memory transport is active', async () => {
+    const result = await sendPasswordResetEmail(params());
+
+    expect(result).toEqual({ delivered: true, transport: 'memory' });
+    expect(getCapturedEmails()).toHaveLength(1);
+  });
+
+  it('carries the recipient, sender and a subject with no token in it', async () => {
+    await sendPasswordResetEmail(params());
+
+    const [message] = getCapturedEmails();
+    expect(message.to).toBe('user@example.com');
+    expect(message.from).toBe(env.EMAIL_FROM);
+    expect(message.subject).toContain('Reset your');
+    expect(message.subject).not.toContain(RAW_TOKEN);
+  });
+
+  it('offers the link in both the text and the HTML body', async () => {
+    await sendPasswordResetEmail(params());
+
+    const [message] = getCapturedEmails();
+    const url = buildPasswordResetUrl(RAW_TOKEN);
+
+    expect(message.text).toContain(url);
+    expect(message.html).toContain(url);
+  });
+
+  it('appears exactly once in the text body so it cannot be re-derived', async () => {
+    await sendPasswordResetEmail(params());
+
+    const [message] = getCapturedEmails();
+    expect(message.text.split(RAW_TOKEN)).toHaveLength(2);
+  });
+
+  it('states the single-use and expiry terms', async () => {
+    await sendPasswordResetEmail(params());
+
+    const [message] = getCapturedEmails();
+    expect(message.text).toContain('used once');
+    expect(message.text).toContain(EXPIRES_AT.toISOString());
+    expect(message.html).toContain('used once');
+  });
+
+  it('makes the unsolicited case explicit: the password has not changed', async () => {
+    await sendPasswordResetEmail(params());
+
+    const [message] = getCapturedEmails();
+    expect(message.text).toContain('did not request a password reset');
+    expect(message.text).toContain('ignore this email');
+    expect(message.html).toContain('has not changed');
+  });
+
+  it('never mentions the old or new password', async () => {
+    await sendPasswordResetEmail(params());
+
+    const [message] = getCapturedEmails();
+    expect(message.text.toLowerCase()).not.toContain('current password');
+  });
+
+  it('escapes a hostile first name instead of injecting markup', async () => {
+    await sendPasswordResetEmail(params({ firstName: '<img src=x onerror="alert(1)">' }));
+
+    const [message] = getCapturedEmails();
+    expect(message.html).not.toContain('<img src=x');
+    expect(message.html).toContain('&lt;img src=x');
+  });
+
+  it('reports a provider failure instead of throwing', async () => {
+    setEmailTransport({
+      name: 'stub-failure',
+      send: async () => {
+        throw new Error('provider refused the message');
+      },
+    });
+
+    await expect(sendPasswordResetEmail(params())).resolves.toEqual({
+      delivered: false,
+      transport: 'stub-failure',
+    });
   });
 });
 

@@ -310,6 +310,28 @@ export const env = {
     0,
     24 * 60 * 60
   ),
+  // Password-reset links get a much shorter life than email-verification links:
+  // 30 minutes matches the guidance for single-use credential-reset tokens and
+  // limits the window in which a link sitting in an inbox or a proxy log is
+  // useful to an attacker.
+  PASSWORD_RESET_TOKEN_TTL_MINUTES: resolveBoundedInt(
+    'PASSWORD_RESET_TOKEN_TTL_MINUTES',
+    process.env.PASSWORD_RESET_TOKEN_TTL_MINUTES,
+    30,
+    5,
+    24 * 60
+  ),
+  // Per-account cooldown between reset emails. Deliberately longer than the
+  // 60s verification cooldown: a reset mail is a higher-value abuse target
+  // (it can be used to take over an account) and it should not be a way to
+  // flood a mailbox.
+  PASSWORD_RESET_REQUEST_COOLDOWN_SECONDS: resolveBoundedInt(
+    'PASSWORD_RESET_REQUEST_COOLDOWN_SECONDS',
+    process.env.PASSWORD_RESET_REQUEST_COOLDOWN_SECONDS,
+    300,
+    0,
+    24 * 60 * 60
+  ),
   isDevelopment: process.env.NODE_ENV === 'development',
   isProduction: process.env.NODE_ENV === 'production',
 };

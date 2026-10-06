@@ -12,6 +12,12 @@ const Register = lazy(() => import('../pages/Register').then((m) => ({ default: 
 const VerifyEmail = lazy(() =>
   import('../pages/VerifyEmail').then((m) => ({ default: m.VerifyEmail }))
 );
+const ForgotPassword = lazy(() =>
+  import('../pages/ForgotPassword').then((m) => ({ default: m.ForgotPassword }))
+);
+const ResetPassword = lazy(() =>
+  import('../pages/ResetPassword').then((m) => ({ default: m.ResetPassword }))
+);
 const Dashboard = lazy(() => import('../pages/Dashboard').then((m) => ({ default: m.Dashboard })));
 const Profile = lazy(() => import('../pages/Profile').then((m) => ({ default: m.Profile })));
 const Transactions = lazy(() =>
@@ -92,6 +98,20 @@ export const routes: RouteObject[] = [
     // reachable with or without a session, because the token in the link is the
     // credential rather than the cookie.
     element: createElement(WithSuspense(VerifyEmail)),
+  },
+  {
+    path: '/forgot-password',
+    // Not GuestRoute-wrapped: a signed-in user who has forgotten their password
+    // must be able to reach it too. It is a credential-recovery page, not a
+    // guest-only page.
+    element: createElement(WithSuspense(ForgotPassword)),
+  },
+  {
+    path: '/reset-password',
+    // Same reasoning as `/forgot-password`, and the link must also work in a tab
+    // where a session exists but the server has revoked it: GuestRoute would
+    // redirect that tab away from the form it needs to see.
+    element: createElement(WithSuspense(ResetPassword)),
   },
   {
     path: '/dashboard',
@@ -258,7 +278,14 @@ export const routes: RouteObject[] = [
 // Reachable without a session, but not exclusively: `/verify-email` is listed
 // here because an anonymous visitor following the emailed link must get through,
 // not because it is guest-only.
-export const publicRoutes = ['/', '/login', '/register', '/verify-email'];
+export const publicRoutes = [
+  '/',
+  '/login',
+  '/register',
+  '/verify-email',
+  '/forgot-password',
+  '/reset-password',
+];
 export const protectedRoutes = [
   '/dashboard',
   '/profile',

@@ -1,4 +1,4 @@
-import { User, Session, AccountStatus, Role, FinancialProfile } from '@prisma/client';
+import { User, Session, AccountStatus, Role, FinancialProfile, Prisma } from '@prisma/client';
 import { AuthenticatedUser } from '../types/auth.js';
 import { authService } from './authService.js';
 import { prisma } from '../config/prisma.js';
@@ -110,8 +110,23 @@ export async function revokeSession(sessionId: string): Promise<void> {
   });
 }
 
-export async function revokeAllUserSessions(userId: string): Promise<number> {
-  const result = await prisma.session.updateMany({
+/**
+ * Revokes every live session for a user. This is the existing logout-all
+ * mechanism, reused by the password-reset flow.
+ *
+ * `client` lets the caller join an open transaction so that revoking sessions,
+ * writing a new password hash and consuming the reset token commit together.
+ * That matters: revoking sessions on a separate connection after the password
+ * change commits would leave a window in which the new password is live while
+ * old sessions still work.
+ */
+export async function revokeAllUserSessions(
+  userId: string,
+  client?: Prisma.TransactionClient
+): Promise<number> {
+  const executor = client ?? prisma;
+
+  const result = await executor.session.updateMany({
     where: {
       userId,
       revokedAt: null,

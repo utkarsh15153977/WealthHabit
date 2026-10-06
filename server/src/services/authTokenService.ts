@@ -51,10 +51,10 @@ export async function createAuthToken(
 }
 
 /**
- * Creates an `EMAIL_VERIFICATION` token with an explicitly supplied lifetime,
- * used where the TTL is operator-configurable in minutes rather than hours.
- * The raw token is returned to the caller for delivery only; nothing but the
- * hash is written.
+ * Creates a single-use auth token of `type` with an explicitly supplied lifetime
+ * in minutes, used where the TTL is operator-configurable in minutes rather than
+ * hours. The raw token is returned to the caller for delivery only; nothing but
+ * the hash is written.
  *
  * Pass `client` when the insert must join an open transaction. It is not
  * optional in practice for issuance: inserting an `auth_tokens` row takes a
@@ -63,10 +63,10 @@ export async function createAuthToken(
  * operation on another connection. Writing through a second connection would
  * therefore deadlock against the caller's own transaction until it times out.
  */
-export async function createEmailVerificationToken(
+export async function createTypedAuthToken(
   userId: string,
+  type: AuthTokenType,
   ttlMinutes: number,
-  type: AuthTokenType = AuthTokenType.EMAIL_VERIFICATION,
   client?: AuthTokenQueryClient
 ): Promise<{ rawToken: string; tokenHash: string; expiresAt: Date }> {
   const rawToken = generateRawToken();
@@ -85,6 +85,24 @@ export async function createEmailVerificationToken(
   });
 
   return { rawToken, tokenHash, expiresAt };
+}
+
+/** `EMAIL_VERIFICATION` flavour of {@link createTypedAuthToken}. */
+export async function createEmailVerificationToken(
+  userId: string,
+  ttlMinutes: number,
+  client?: AuthTokenQueryClient
+): Promise<{ rawToken: string; tokenHash: string; expiresAt: Date }> {
+  return createTypedAuthToken(userId, AuthTokenType.EMAIL_VERIFICATION, ttlMinutes, client);
+}
+
+/** `PASSWORD_RESET` flavour of {@link createTypedAuthToken}. */
+export async function createPasswordResetToken(
+  userId: string,
+  ttlMinutes: number,
+  client?: AuthTokenQueryClient
+): Promise<{ rawToken: string; tokenHash: string; expiresAt: Date }> {
+  return createTypedAuthToken(userId, AuthTokenType.PASSWORD_RESET, ttlMinutes, client);
 }
 
 /**

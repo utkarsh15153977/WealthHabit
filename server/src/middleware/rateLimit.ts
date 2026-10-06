@@ -17,6 +17,34 @@ export const LOGIN_RATE_LIMIT_MAX = env.isDevelopment ? 20 : 5;
 export const RESEND_VERIFICATION_RATE_LIMIT_MAX = env.isDevelopment ? 20 : 5;
 
 /**
+ * Budget for `POST /api/auth/forgot-password`, keyed on (account, IP) exactly
+ * like the login and resend-verification limiters, and the same magnitude as
+ * those for the same reason: this is an unauthenticated per-account endpoint
+ * where the interesting abuse is "hammer one address from one client" and
+ * "enumerate addresses from one client", both of which a composite key stops.
+ *
+ * It must be mounted before any body validation or account lookup so that a
+ * probe flood costs a rate-limit counter increment rather than a database
+ * round trip. The per-account *cooldown* (default 300s) is enforced separately
+ * and durably by `passwordResetService`, because this in-memory counter is
+ * process-local and resets on deploy.
+ */
+export const FORGOT_PASSWORD_RATE_LIMIT_MAX = env.isDevelopment ? 20 : 5;
+
+/**
+ * Budget for `POST /api/auth/reset-password`.
+ *
+ * Keyed on IP alone, deliberately. Applying the limiter per submitted token
+ * would be useless (tokens are unguessable) and per account is impossible
+ * before the token is consumed; an IP-only key is what actually bounds the
+ * resource that matters. Every valid attempt performs a full Argon2id
+ * derivation, which is the most expensive thing an unauthenticated caller can
+ * reach in this feature, so this budget is set at the same 5 / 15 min per
+ * process as the login limiter rather than higher.
+ */
+export const RESET_PASSWORD_RATE_LIMIT_MAX = env.isDevelopment ? 20 : 5;
+
+/**
  * Normalizes the submitted email exactly like the login path does
  * (`loginSchema` and `findUserByEmail` both apply `toLowerCase().trim()`), so
  * every casing/whitespace variant of one address shares a single bucket.
@@ -133,6 +161,58 @@ export const resendVerificationRateLimit = rateLimit({
       normalizeLoginEmail(request.body),
       ipKeyGenerator(request.ip ?? '', 56)
     ),
+});
+
+/**
+ * Limiter for `POST /api/auth/forgot-password`, keyed by normalized email +
+ * trusted client IP, mounted before schema validation and before the account
+ * lookup. Same ordering argument as resend-verification: the budget is spent
+ * identically whether or not the address exists, so a 429 cannot distinguish a
+ * real account from a guess.
+ */
+export const forgotPasswordRateLimit = rateLimit({
+  windowMs,
+  max: FORGOT_PASSWORD_RATE_LIMIT_MAX,
+  message: {
+    success: false,
+    error: {
+      code: 'RATE_LIMIT_EXCEEDED',
+      message: 'Too many requests, please try again later',
+    },
+  },
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (request) =>
+    buildScopedRateLimitKey(
+      'forgot-password',
+      normalizeLoginEmail(request.body),
+      ipKeyGenerator(request.ip ?? '', 56)
+    ),
+});
+
+/**
+ * Limiter for `POST /api/auth/reset-password`, keyed by trusted client IP only.
+ *
+ * It must stay in front of the handler so that the Argon2id derivation in the
+ * reset flow is reachable only within this budget — that derivation is the most
+ * expensive operation an unauthenticated caller can trigger here. It cannot be
+ * keyed per account, because the owner is only known after the token has been
+ * consumed, and it must not be keyed per token, because the token is
+ * unguessable and a per-token bucket would accomplish nothing.
+ */
+export const resetPasswordRateLimit = rateLimit({
+  windowMs,
+  max: RESET_PASSWORD_RATE_LIMIT_MAX,
+  message: {
+    success: false,
+    error: {
+      code: 'RATE_LIMIT_EXCEEDED',
+      message: 'Too many requests, please try again later',
+    },
+  },
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (request) => ipKeyGenerator(request.ip ?? '', 56),
 });
 
 export const apiRateLimit = rateLimit({

@@ -123,7 +123,7 @@ async function issue(params: IssueParams): Promise<ResendOutcome> {
         ? await revokeUserAuthTokens(userId, AuthTokenType.EMAIL_VERIFICATION, tx)
         : 0;
 
-      const token = await createEmailVerificationToken(userId, ttlMinutes, AuthTokenType.EMAIL_VERIFICATION, tx);
+      const token = await createEmailVerificationToken(userId, ttlMinutes, tx);
 
       await recordAuditEvent(
         {

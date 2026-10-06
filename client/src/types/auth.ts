@@ -41,6 +41,24 @@ export interface ResendVerificationResponse {
   message: string;
 }
 
+export interface ForgotPasswordRequest {
+  email: string;
+}
+
+/** The same shape and message the backend returns for every outcome. */
+export interface ForgotPasswordResponse {
+  message: string;
+}
+
+export interface ResetPasswordRequest {
+  token: string;
+  newPassword: string;
+}
+
+export interface ResetPasswordResponse {
+  message: string;
+}
+
 export interface RefreshResponse {
   accessToken: string;
 }

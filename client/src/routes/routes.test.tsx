@@ -29,6 +29,8 @@ describe('application routes', () => {
       '/login',
       '/register',
       '/verify-email',
+      '/forgot-password',
+      '/reset-password',
       '/dashboard',
       '/profile',
       '/transactions',
@@ -53,7 +55,14 @@ describe('application routes', () => {
   });
 
   it('keeps the public and protected route lists', () => {
-    expect(publicRoutes).toEqual(['/', '/login', '/register', '/verify-email']);
+    expect(publicRoutes).toEqual([
+      '/',
+      '/login',
+      '/register',
+      '/verify-email',
+      '/forgot-password',
+      '/reset-password',
+    ]);
     expect(protectedRoutes).toEqual([
       '/dashboard',
       '/profile',
@@ -120,5 +129,23 @@ describe('email verification route', () => {
   it('is still wrapped in the same suspense boundary as the other guest pages', () => {
     const child = adminRouteElement('/verify-email') as ReactElement | undefined;
     expect(child).toBeDefined();
+  });
+});
+
+describe('password reset routes', () => {
+  it('are reachable with or without a session', () => {
+    // A signed-in user who has forgotten their password must be able to reach
+    // these, and a tab whose session the server has just revoked must not be
+    // redirected away from the form. Neither is wrapped in GuestRoute.
+    for (const path of ['/forgot-password', '/reset-password']) {
+      expect(adminRouteElement(path)?.type, path).not.toBe(GuestRoute);
+      expect(adminRouteElement(path)?.type, path).not.toBe(ProtectedRoute);
+    }
+  });
+
+  it('are lazy-loaded inside a suspense boundary like the other guest pages', () => {
+    for (const path of ['/forgot-password', '/reset-password']) {
+      expect(adminRouteElement(path) as ReactElement | undefined, path).toBeDefined();
+    }
   });
 });

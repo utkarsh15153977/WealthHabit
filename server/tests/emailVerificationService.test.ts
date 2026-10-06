@@ -259,8 +259,8 @@ describe('POST /api/auth/verify-email', () => {
     const { user } = await registerUser();
     const userId = (await testPrisma.user.findUniqueOrThrow({ where: { email: user.email } })).id;
 
-    const { createEmailVerificationToken } = await import('../src/services/authTokenService.js');
-    const other = await createEmailVerificationToken(userId, 60, AuthTokenType.PASSWORD_RESET);
+    const { createTypedAuthToken } = await import('../src/services/authTokenService.js');
+    const other = await createTypedAuthToken(userId, AuthTokenType.PASSWORD_RESET, 60);
 
     const res = await verify(other.rawToken);
 

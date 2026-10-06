@@ -152,6 +152,18 @@ export function buildVerificationUrl(rawToken: string): string {
   return `${env.CLIENT_URL.replace(/\/+$/, '')}/verify-email?token=${encodeURIComponent(rawToken)}`;
 }
 
+/**
+ * The reset link a user clicks. Same discipline as the verification link: the
+ * raw token appears in the URL and nowhere else — never in a subject, a log
+ * line or an audit row.
+ *
+ * The frontend keeps the token in the address bar and hands it to the backend in
+ * the request body, so the backend never accepts it from a query string.
+ */
+export function buildPasswordResetUrl(rawToken: string): string {
+  return `${env.CLIENT_URL.replace(/\/+$/, '')}/reset-password?token=${encodeURIComponent(rawToken)}`;
+}
+
 export interface VerificationEmailParams {
   to: string;
   firstName: string;
@@ -279,9 +291,118 @@ export async function sendVerificationEmail(
   }
 }
 
+export interface PasswordResetEmailParams {
+  to: string;
+  firstName: string;
+  rawToken: string;
+  expiresAt: Date;
+}
+
+function renderPasswordResetEmail(
+  params: PasswordResetEmailParams
+): Omit<EmailMessage, 'to' | 'from'> {
+  const { firstName, rawToken, expiresAt } = params;
+  const url = buildPasswordResetUrl(rawToken);
+  const expiry = formatExpiry(expiresAt);
+  const resetPage = `${env.CLIENT_URL.replace(/\/+$/, '')}/forgot-password`;
+
+  const subject = `Reset your ${BRAND} password`;
+
+  const text = [
+    `Hi ${firstName},`,
+    '',
+    `We received a request to reset the password for your ${BRAND} account. Open the link below to choose a new one:`,
+    '',
+    url,
+    '',
+    `This link can be used once and expires at ${expiry}.`,
+    '',
+    `If you did not request a password reset, ignore this email — your password has not changed and no action is needed.`,
+    '',
+    `To request a new reset email, open ${resetPage}.`,
+    '',
+    '— The WealthHabit team',
+  ].join('\n');
+
+  const html = `<!DOCTYPE html>
+<html lang="en">
+  <body style="margin:0;padding:24px;background:#f5f6f8;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;color:#1f2933;">
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:560px;margin:0 auto;background:#ffffff;border-radius:12px;border:1px solid #e4e7eb;">
+      <tr>
+        <td style="padding:28px 28px 8px 28px;">
+          <p style="margin:0 0 4px 0;font-size:18px;font-weight:700;color:#0f9d58;">${BRAND}</p>
+          <h1 style="margin:0;font-size:20px;line-height:1.3;color:#1f2933;">Reset your password</h1>
+        </td>
+      </tr>
+      <tr>
+        <td style="padding:16px 28px 0 28px;font-size:15px;line-height:1.6;">
+          <p style="margin:0 0 12px 0;">Hi ${escapeHtml(firstName)},</p>
+          <p style="margin:0 0 20px 0;">We received a request to reset the password for your ${BRAND} account. Choose a new one with the button below:</p>
+          <p style="margin:0 0 20px 0;">
+            <a href="${escapeAttribute(url)}" style="display:inline-block;background:#0f9d58;color:#ffffff;text-decoration:none;padding:12px 22px;border-radius:8px;font-weight:600;">Reset password</a>
+          </p>
+          <p style="margin:0 0 20px 0;font-size:13px;color:#616e7c;">This link can be used once and expires at ${escapeHtml(expiry)}.</p>
+          <p style="margin:0 0 20px 0;font-size:13px;color:#616e7c;">If the button does not work, copy this link into your browser:</p>
+          <p style="margin:0 0 20px 0;font-size:12px;word-break:break-all;color:#0f9d58;">${escapeAttribute(url)}</p>
+          <p style="margin:0 0 8px 0;font-size:13px;color:#616e7c;"><strong>If you did not request a password reset, ignore this email.</strong> Your password has not changed.</p>
+          <p style="margin:0 0 24px 0;font-size:13px;color:#616e7c;">To request a new reset email, open the ${BRAND} forgot-password page.</p>
+        </td>
+      </tr>
+      <tr>
+        <td style="padding:0 28px 28px 28px;border-top:1px solid #e4e7eb;">
+          <p style="margin:16px 0 0 0;font-size:12px;color:#9aa5b1;">The WealthHabit team</p>
+        </td>
+      </tr>
+    </table>
+  </body>
+</html>`;
+
+  return { subject, text, html };
+}
+
+/**
+ * Sends the password-reset email. Reports failures instead of throwing, for the
+ * same reason as verification: the token is already committed and the caller
+ * can request another one, so a provider outage must not fail the request in a
+ * way that distinguishes it from any other outcome (which would leak whether an
+ * account exists).
+ *
+ * The raw token never leaves `buildPasswordResetUrl`.
+ */
+export async function sendPasswordResetEmail(
+  params: PasswordResetEmailParams
+): Promise<SendVerificationEmailResult> {
+  const active = getTransport();
+  const content = renderPasswordResetEmail(params);
+
+  try {
+    await active.send({
+      to: params.to,
+      from: env.EMAIL_FROM,
+      subject: content.subject,
+      text: content.text,
+      html: content.html,
+    });
+
+    return { delivered: true, transport: active.name };
+  } catch (error) {
+    // Only non-identifying facts: the provider response body can echo the
+    // message (and therefore the token), so it is never logged.
+    logger.error('password reset email delivery failed', {
+      transport: active.name,
+      to: params.to,
+      errorName: error instanceof Error ? error.name : 'UnknownError',
+    });
+
+    return { delivered: false, transport: active.name };
+  }
+}
+
 export const emailService = {
   sendVerificationEmail,
+  sendPasswordResetEmail,
   buildVerificationUrl,
+  buildPasswordResetUrl,
   getCapturedEmails,
   clearCapturedEmails,
   setEmailTransport,
