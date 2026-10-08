@@ -19,6 +19,8 @@ afterAll(async () => {
 });
 
 beforeEach(async () => {
+  await prisma.financialAccount.deleteMany();
+  await prisma.financialConnection.deleteMany();
   await prisma.transaction.deleteMany();
   await prisma.budgetCategory.deleteMany();
   await prisma.budget.deleteMany();

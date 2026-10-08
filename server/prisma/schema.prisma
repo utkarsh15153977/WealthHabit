@@ -94,6 +94,32 @@ enum NotificationType {
   HABIT_REMINDER
 }
 
+enum FinancialConnectionProvider {
+  MOCK
+  ACCOUNT_AGGREGATOR
+  BANK
+}
+
+enum FinancialConnectionStatus {
+  ACTIVE
+  ERROR
+  REVOKED
+  DISCONNECTED
+}
+
+enum FinancialAccountType {
+  SAVINGS
+  CURRENT
+  DEBIT_CARD
+  CREDIT_CARD
+  UPI_LINKED
+}
+
+enum TransactionSource {
+  MANUAL
+  IMPORTED
+}
+
 model User {
   id              String        @id @default(cuid())
   email           String        @unique
@@ -112,6 +138,8 @@ model User {
   mfa                   UserMfa?
   recoveryCodes         RecoveryCode[]
   financialProfile      FinancialProfile?
+  financialConnections  FinancialConnection[]
+  financialAccounts     FinancialAccount[]
   categories            Category[]
   transactions          Transaction[]
   recurringTransactions RecurringTransaction[]
@@ -133,15 +161,15 @@ model User {
 }
 
 model Session {
-  id                     String    @id @default(cuid())
-  userId                 String
-  refreshTokenHash       String
+  id                       String    @id @default(cuid())
+  userId                   String
+  refreshTokenHash         String
   previousRefreshTokenHash String?
-  tokenFamilyId          String
-  expiresAt              DateTime
-  revokedAt              DateTime?
-  createdAt              DateTime  @default(now())
-  updatedAt              DateTime  @updatedAt
+  tokenFamilyId            String
+  expiresAt                DateTime
+  revokedAt                DateTime?
+  createdAt                DateTime  @default(now())
+  updatedAt                DateTime  @updatedAt
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
@@ -194,7 +222,17 @@ model RecoveryCode {
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  @@index([userId])
+  /// No plaintext recovery code is ever stored: codeHash holds an Argon2id
+  /// hash of the canonical XXXX-XXXX-XXXX form (rows written before the
+  /// Argon2id upgrade hold SHA-256 and remain read-only verifiable until the
+  /// user regenerates). No expiresAt on purpose: silent expiry of the
+  /// last-resort credential would strand users who keep their codes offline —
+  /// single-use + hashing + rate-limited verification already bound the value
+  /// of a stolen page.
+  @@unique([userId, codeHash])
+  /// Serves both plain userId lookups (leftmost prefix) and the
+  /// `(userId, usedAt: null)` scan every verification performs.
+  @@index([userId, usedAt])
   @@map("recovery_codes")
 }
 
@@ -212,6 +250,53 @@ model FinancialProfile {
   @@map("financial_profiles")
 }
 
+model FinancialConnection {
+  id               String                      @id @default(cuid())
+  userId           String
+  provider         FinancialConnectionProvider
+  status           FinancialConnectionStatus   @default(ACTIVE)
+  institutionName  String?
+  consentGivenAt   DateTime?
+  revokedAt        DateTime?
+  lastSyncedAt     DateTime?
+  lastSyncError    String?
+  providerMetadata Json?
+  createdAt        DateTime                    @default(now())
+  updatedAt        DateTime                    @updatedAt
+
+  user     User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  accounts FinancialAccount[]
+
+  @@unique([userId, provider])
+  @@index([userId])
+  @@map("financial_connections")
+}
+
+model FinancialAccount {
+  id                String               @id @default(cuid())
+  connectionId      String
+  userId            String
+  externalAccountId String
+  name              String
+  mask              String?
+  type              FinancialAccountType
+  currency          String               @default("USD")
+  institutionName   String?
+  isActive          Boolean              @default(true)
+  lastSyncedAt      DateTime?
+  createdAt         DateTime             @default(now())
+  updatedAt         DateTime             @updatedAt
+
+  connection FinancialConnection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+  user       User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  transactions Transaction[]
+
+  @@unique([connectionId, externalAccountId])
+  @@index([userId])
+  @@map("financial_accounts")
+}
+
 model Category {
   id        String       @id @default(cuid())
   userId    String?
@@ -223,12 +308,12 @@ model Category {
   createdAt DateTime     @default(now())
   updatedAt DateTime     @updatedAt
 
-  user             User?            @relation(fields: [userId], references: [id], onDelete: Cascade)
-  transactions     Transaction[]
-  budgetCategories BudgetCategory[]
+  user                  User?                  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  transactions          Transaction[]
+  budgetCategories      BudgetCategory[]
   recurringTransactions RecurringTransaction[]
-  bills            Bill[]
-  subscriptions    Subscription[]
+  bills                 Bill[]
+  subscriptions         Subscription[]
 
   @@unique([userId, name])
   @@index([userId])
@@ -237,49 +322,61 @@ model Category {
 }
 
 model Transaction {
-  id                    String          @id @default(cuid())
-  userId                String
-  categoryId            String
-  type                  TransactionType
-  amount                Decimal         @db.Decimal(15, 2)
-  description           String?
-  transactionDate       DateTime
-  paymentMethod         String?
-  notes                 String?
+  id                     String            @id @default(cuid())
+  userId                 String
+  categoryId             String
+  type                   TransactionType
+  amount                 Decimal           @db.Decimal(15, 2)
+  description            String?
+  transactionDate        DateTime
+  paymentMethod          String?
+  notes                  String?
   recurringTransactionId String?
-  createdAt             DateTime        @default(now())
-  updatedAt             DateTime        @updatedAt
+  createdAt              DateTime          @default(now())
+  updatedAt              DateTime          @updatedAt
+  financialAccountId     String?
+  source                 TransactionSource @default(MANUAL)
+  externalTransactionId  String?
+  merchant               String?
+  paymentChannel         String?
+  dedupKey               String?
+  importedAt             DateTime?
 
-  user                User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
-  category            Category             @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+  user                 User                  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  category             Category              @relation(fields: [categoryId], references: [id], onDelete: Restrict)
   recurringTransaction RecurringTransaction? @relation(fields: [recurringTransactionId], references: [id], onDelete: SetNull)
+  financialAccount     FinancialAccount?     @relation(fields: [financialAccountId], references: [id], onDelete: SetNull)
 
   @@unique([recurringTransactionId, transactionDate])
+  @@unique([financialAccountId, externalTransactionId])
+  @@unique([userId, dedupKey])
   @@index([userId])
   @@index([categoryId])
   @@index([transactionDate])
   @@index([userId, transactionDate])
   @@index([recurringTransactionId])
+  @@index([userId, source])
+  @@index([financialAccountId])
   @@map("transactions")
 }
 
 model RecurringTransaction {
-  id                 String        @id @default(cuid())
+  id                 String          @id @default(cuid())
   userId             String
   categoryId         String
   type               TransactionType
-  amount             Decimal       @db.Decimal(15, 2)
+  amount             Decimal         @db.Decimal(15, 2)
   name               String
   frequency          Frequency
   startDate          DateTime
   endDate            DateTime?
   nextOccurrenceDate DateTime
-  isActive           Boolean       @default(true)
-  createdAt          DateTime      @default(now())
-  updatedAt          DateTime      @updatedAt
+  isActive           Boolean         @default(true)
+  createdAt          DateTime        @default(now())
+  updatedAt          DateTime        @updatedAt
 
-  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
-  category     Category     @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+  user         User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  category     Category      @relation(fields: [categoryId], references: [id], onDelete: Restrict)
   transactions Transaction[]
 
   @@index([userId])
@@ -335,8 +432,8 @@ model FinancialHabit {
   createdAt    DateTime  @default(now())
   updatedAt    DateTime  @updatedAt
 
-  user        User              @relation(fields: [userId], references: [id], onDelete: Cascade)
-  completions HabitCompletion[]
+  user              User                        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  completions       HabitCompletion[]
   challengeMappings ChallengeParticipantHabit[]
 
   @@index([userId])
@@ -515,16 +612,16 @@ model Challenge {
 }
 
 model ChallengeHabitRequirement {
-  id          String   @id @default(cuid())
+  id          String    @id @default(cuid())
   challengeId String
   name        String
   description String?
   frequency   Frequency
-  target      Int      @default(1)
+  target      Int       @default(1)
   unit        String?
-  createdAt   DateTime @default(now())
+  createdAt   DateTime  @default(now())
 
-  challenge Challenge @relation(fields: [challengeId], references: [id], onDelete: Cascade)
+  challenge Challenge                   @relation(fields: [challengeId], references: [id], onDelete: Cascade)
   mappings  ChallengeParticipantHabit[]
 
   @@index([challengeId])
@@ -540,8 +637,8 @@ model ChallengeParticipant {
   joinedAt    DateTime        @default(now())
   completedAt DateTime?
 
-  challenge Challenge                @relation(fields: [challengeId], references: [id], onDelete: Cascade)
-  user      User                     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  challenge Challenge                   @relation(fields: [challengeId], references: [id], onDelete: Cascade)
+  user      User                        @relation(fields: [userId], references: [id], onDelete: Cascade)
   mappings  ChallengeParticipantHabit[]
 
   @@unique([challengeId, userId])
