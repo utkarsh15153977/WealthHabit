@@ -37,6 +37,7 @@ import adminUserRoutes from './routes/adminUserRoutes.js';
 import adminChallengeRoutes from './routes/adminChallengeRoutes.js';
 import adminAuditLogRoutes from './routes/adminAuditLogRoutes.js';
 import adminSystemHealthRoutes from './routes/adminSystemHealthRoutes.js';
+import { financialConnectionRouter, financialAccountRouter } from './routes/financialConnectionRoutes.js';
 
 const app = express();
 
@@ -83,6 +84,8 @@ app.use('/api/wealth-snapshots', wealthSnapshotRouter);
 app.use('/api/wealth-analytics', wealthAnalyticsRouter);
 app.use('/api/reports', reportRouter);
 app.use('/api/dashboard', dashboardRoutes);
+app.use('/api/financial-connections', financialConnectionRouter);
+app.use('/api/financial-accounts', financialAccountRouter);
 app.use('/api/admin', adminDashboardRoutes);
 app.use('/api/admin', adminUserRoutes);
 app.use('/api/admin', adminChallengeRoutes);
