@@ -11,6 +11,7 @@ import {
   ReceiptText,
 } from 'lucide-react';
 import { useForm } from 'react-hook-form';
+import { Link } from 'react-router-dom';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import { Loading } from '../components/Loading';
@@ -399,10 +400,16 @@ export function Transactions() {
               Track income and expenses to understand where your money goes.
             </p>
           </div>
-          <button type="button" className="btn-primary" onClick={openCreateForm}>
-            <Plus className="w-4 h-4" aria-hidden="true" />
-            Add Transaction
-          </button>
+          <div className="flex flex-wrap items-center gap-3 self-start sm:self-auto">
+            <Link to="/transactions/imported" className="btn-secondary">
+              <ReceiptText className="w-4 h-4" aria-hidden="true" />
+              Imported Transactions
+            </Link>
+            <button type="button" className="btn-primary" onClick={openCreateForm}>
+              <Plus className="w-4 h-4" aria-hidden="true" />
+              Add Transaction
+            </button>
+          </div>
         </div>
 
         {successMessage && (

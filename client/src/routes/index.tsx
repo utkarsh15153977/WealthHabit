@@ -23,6 +23,12 @@ const Profile = lazy(() => import('../pages/Profile').then((m) => ({ default: m.
 const Transactions = lazy(() =>
   import('../pages/Transactions').then((m) => ({ default: m.Transactions }))
 );
+const FinancialConnections = lazy(() =>
+  import('../pages/FinancialConnections').then((m) => ({ default: m.FinancialConnections }))
+);
+const ImportedTransactions = lazy(() =>
+  import('../pages/ImportedTransactions').then((m) => ({ default: m.ImportedTransactions }))
+);
 const Budgets = lazy(() => import('../pages/Budgets').then((m) => ({ default: m.Budgets })));
 const RecurringTransactions = lazy(() =>
   import('../pages/RecurringTransactions').then((m) => ({ default: m.RecurringTransactions }))
@@ -134,6 +140,22 @@ export const routes: RouteObject[] = [
     element: (
       <ProtectedRoute>
         <AppLayout>{createElement(WithSuspense(Transactions))}</AppLayout>
+      </ProtectedRoute>
+    ),
+  },
+  {
+    path: '/financial-connections',
+    element: (
+      <ProtectedRoute>
+        <AppLayout>{createElement(WithSuspense(FinancialConnections))}</AppLayout>
+      </ProtectedRoute>
+    ),
+  },
+  {
+    path: '/transactions/imported',
+    element: (
+      <ProtectedRoute>
+        <AppLayout>{createElement(WithSuspense(ImportedTransactions))}</AppLayout>
       </ProtectedRoute>
     ),
   },
@@ -290,6 +312,8 @@ export const protectedRoutes = [
   '/dashboard',
   '/profile',
   '/transactions',
+  '/financial-connections',
+  '/transactions/imported',
   '/budgets',
   '/recurring-transactions',
   '/bills',

@@ -1,6 +1,7 @@
 import type { LucideIcon } from 'lucide-react';
 import {
   Activity,
+  Building2,
   CreditCard,
   FileText,
   Landmark,
@@ -37,6 +38,7 @@ export const primaryNavGroup: NavGroup = {
   items: [
     { label: 'Dashboard', href: '/dashboard', icon: LayoutDashboard },
     { label: 'Transactions', href: '/transactions', icon: CreditCard },
+    { label: 'Connections', href: '/financial-connections', icon: Building2 },
     { label: 'Budgets', href: '/budgets', icon: Target },
     { label: 'Recurring', href: '/recurring-transactions', icon: Repeat },
     { label: 'Bills', href: '/bills', icon: Receipt },

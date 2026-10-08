@@ -45,6 +45,17 @@ const CODE_MESSAGES: Record<string, string> = {
   ADMIN_SELF_STATUS_CHANGE: 'You cannot suspend or deactivate your own account',
   INVALID_STATUS_TRANSITION: 'This account status change is not allowed',
   LAST_ADMIN_REQUIRED: 'The last administrator cannot be demoted',
+  CONNECTION_ALREADY_EXISTS: 'A connection for this provider already exists',
+  CONNECTION_REVOKED: 'This connection was revoked by the provider',
+  SYNC_ALREADY_IN_PROGRESS: 'A sync is already running for this account',
+  SYNC_FAILED: 'Sync failed. Please try again',
+  FINANCIAL_CONNECTION_NOT_FOUND: 'Financial connection not found',
+  FINANCIAL_ACCOUNT_NOT_FOUND: 'Financial account not found',
+  PROVIDER_NOT_SUPPORTED: 'This provider is not supported',
+  PROVIDER_ERROR: 'The financial data provider is unavailable. Please try again later',
+  CATEGORY_RULE_NOT_FOUND: 'This merchant rule no longer exists',
+  CATEGORY_RULE_ALREADY_EXISTS: 'A rule for this merchant already exists',
+  TRANSACTION_NOT_IMPORTED: 'Only imported transactions can be changed here',
 };
 
 const STATUS_MESSAGES: Record<number, string> = {
