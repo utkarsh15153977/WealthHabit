@@ -12,6 +12,10 @@ import { getFinancialDataProvider } from '../providers/financialData/registry.js
 import type { ExternalTransaction } from '../providers/financialData/types.js';
 import { findUserAccount } from './prismaFinancialConnectionService.js';
 import { listUserCategories } from './prismaCategoryService.js';
+import {
+  categorize,
+  resolveBuiltInCategoryName,
+} from './categorization/categorizationEngine.js';
 import { ApiErrorCodes } from '../types/errorCodes.js';
 import { AppError } from '../utils/errors.js';
 import { SyncResultDto } from '../types/financialConnection.js';
@@ -19,50 +23,6 @@ import { SyncResultDto } from '../types/financialConnection.js';
 const DESCRIPTION_MAX_LENGTH = 500;
 const PAYMENT_METHOD_MAX_LENGTH = 100;
 const DEFAULT_SYNC_WINDOW_DAYS = 90;
-
-interface CategoryRule {
-  merchantPatterns: RegExp[];
-  incomeCategory: string | null;
-  expenseCategory: string;
-}
-
-const CATEGORY_RULES: CategoryRule[] = [
-  {
-    merchantPatterns: [/swiggy/i, /bigbasket/i, /reliance fresh/i, /grocery/i],
-    incomeCategory: null,
-    expenseCategory: 'Food',
-  },
-  {
-    merchantPatterns: [/amazon/i, /flipkart/i, /myntra/i],
-    incomeCategory: null,
-    expenseCategory: 'Shopping',
-  },
-  {
-    merchantPatterns: [/uber/i, /ola/i, /rapido/i],
-    incomeCategory: null,
-    expenseCategory: 'Transportation',
-  },
-  {
-    merchantPatterns: [/mseb/i, /electricity/i, /power/i],
-    incomeCategory: null,
-    expenseCategory: 'Utilities',
-  },
-  {
-    merchantPatterns: [/netflix/i, /spotify/i, /prime video/i, /hotstar/i, /disney/i],
-    incomeCategory: null,
-    expenseCategory: 'Entertainment',
-  },
-  {
-    merchantPatterns: [/hp petrol/i, /petrol/i, /fuel/i, /indian oil/i, /bharat petroleum/i],
-    incomeCategory: null,
-    expenseCategory: 'Transportation',
-  },
-  {
-    merchantPatterns: [/acme corp/i, /salary/i, /payroll/i],
-    incomeCategory: 'Salary',
-    expenseCategory: 'Other Expense',
-  },
-];
 
 /**
  * In-process single-flight guard keyed by financial account id. Process-local
@@ -92,20 +52,7 @@ export interface ResolvedImportTransaction extends NormalizedImportTransaction {
 type CategoryLookup = Map<string, { id: string; name: string; type: CategoryType | TransactionType }>;
 
 export function resolveCategoryName(merchant: string | null, type: TransactionType): string {
-  if (merchant) {
-    for (const rule of CATEGORY_RULES) {
-      if (!rule.merchantPatterns.some((pattern) => pattern.test(merchant))) {
-        continue;
-      }
-      if (type === TransactionType.INCOME && rule.incomeCategory) {
-        return rule.incomeCategory;
-      }
-      if (type === TransactionType.EXPENSE) {
-        return rule.expenseCategory;
-      }
-    }
-  }
-  return type === TransactionType.INCOME ? 'Other Income' : 'Other Expense';
+  return resolveBuiltInCategoryName(merchant, type);
 }
 
 export function generateDedupKey(
@@ -177,31 +124,35 @@ export function normalizeExternalTransaction(
 }
 
 /**
- * Maps a normalized transaction onto an existing Category. Merchant rules
- * first, then the global default ("Other Income" / "Other Expense"). The
- * resolved category type must equal the transaction type; a rule pointing at
- * a mismatched type falls through to the default. Never creates categories.
+ * Maps a normalized transaction onto an existing Category through the
+ * categorization engine (built-in rules, no user rules), then the global
+ * default ("Other Income" / "Other Expense"). The resolved category type must
+ * equal the transaction type; a rule pointing at a mismatched type falls
+ * through to the next tier. Never creates categories.
  */
 export function resolveCategoryId(
   normalized: NormalizedImportTransaction,
   categoriesByName: CategoryLookup
 ): string {
-  const sameType = (
-    left: CategoryType | TransactionType,
-    right: CategoryType | TransactionType
-  ): boolean => String(left) === String(right);
+  const categories = [...categoriesByName.values()].map((category) => ({
+    id: category.id,
+    name: category.name,
+    type: category.type,
+  }));
 
-  const categoryName = resolveCategoryName(normalized.merchant, normalized.type);
-  const matched = categoriesByName.get(categoryName.toLowerCase());
-  if (matched && sameType(matched.type, normalized.type)) {
-    return matched.id;
-  }
+  const result = categorize(
+    { categories },
+    {
+      type: normalized.type,
+      merchant: normalized.merchant,
+      description: normalized.description,
+      paymentChannel: normalized.paymentChannel,
+      paymentMethod: normalized.paymentMethod,
+    }
+  );
 
-  const fallbackName =
-    normalized.type === TransactionType.INCOME ? 'Other Income' : 'Other Expense';
-  const fallback = categoriesByName.get(fallbackName.toLowerCase());
-  if (fallback && sameType(fallback.type, normalized.type)) {
-    return fallback.id;
+  if (result) {
+    return result.categoryId;
   }
 
   throw new AppError(
@@ -350,9 +301,10 @@ async function doSync(
   const connectionAccountIds = connectionAccounts.map((row) => row.id);
 
   const categories = await listUserCategories(userId);
-  const categoriesByName: CategoryLookup = new Map(
-    categories.map((category) => [category.name.toLowerCase(), category])
-  );
+  const userRules = await prisma.transactionCategoryRule.findMany({
+    where: { userId, isActive: true },
+    select: { normalizedMerchant: true, categoryId: true, priority: true },
+  });
 
   const resolved: ResolvedImportTransaction[] = [];
   for (const external of externalTxns) {
@@ -364,9 +316,27 @@ async function doSync(
     if (!normalized) {
       continue;
     }
+    const result = categorize(
+      { categories, userRules },
+      {
+        type: normalized.type,
+        merchant: normalized.merchant,
+        description: normalized.description,
+        paymentChannel: normalized.paymentChannel,
+        paymentMethod: normalized.paymentMethod,
+      }
+    );
+    if (!result) {
+      throw new AppError(
+        'No usable category available for import',
+        500,
+        undefined,
+        ApiErrorCodes.CATEGORY_NOT_FOUND
+      );
+    }
     resolved.push({
       ...normalized,
-      categoryId: resolveCategoryId(normalized, categoriesByName),
+      categoryId: result.categoryId,
       financialAccountId: targetAccountId,
     });
   }

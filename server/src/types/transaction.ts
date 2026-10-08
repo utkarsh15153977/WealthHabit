@@ -65,3 +65,15 @@ export interface ImportedTransactionListData {
   transactions: ImportedTransactionData[];
   pagination: PaginationMeta;
 }
+
+export interface CategorizationPreviewData {
+  category: TransactionCategorySummary;
+  confidence: number;
+  reason: string;
+  matchedRule: string | null;
+}
+
+export interface BulkRecategorizeData {
+  transactionCount: number;
+  categoryId: string;
+}

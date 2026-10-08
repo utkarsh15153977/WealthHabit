@@ -156,11 +156,46 @@ export const transactionCategorySchema = z.object({
   body: z
     .object({
       categoryId: z.string().min(1, 'Category is required'),
+      rememberForMerchant: z.boolean().optional(),
     })
     .strict(),
+});
+
+export const categorizationPreviewSchema = z.object({
+  body: z
+    .object({
+      type: z.enum(transactionTypeValues, {
+        errorMap: () => ({ message: 'Type must be INCOME or EXPENSE' }),
+      }),
+      merchant: z.string().trim().max(200).nullable().optional(),
+      description: z.string().trim().max(500).nullable().optional(),
+      paymentMethod: z.string().trim().max(100).nullable().optional(),
+      paymentChannel: z.string().trim().max(100).nullable().optional(),
+    })
+    .strict(),
+});
+
+export const bulkRecategorizeSchema = z.object({
+  body: z
+    .object({
+      transactionIds: z
+        .array(z.string().min(1, 'Transaction id is required'))
+        .min(1, 'At least one transaction is required')
+        .max(100, 'A maximum of 100 transactions can be recategorized at once'),
+      categoryId: z.string().min(1, 'Category is required'),
+      rememberForMerchant: z.boolean().optional(),
+    })
+    .strict()
+    .refine((body) => new Set(body.transactionIds).size === body.transactionIds.length, {
+      message: 'transactionIds must be unique',
+    }),
 });
 
 export type ListImportedTransactionsQuery = z.infer<
   typeof listImportedTransactionsSchema.shape.query
 >;
 export type TransactionCategoryInput = z.infer<typeof transactionCategorySchema.shape.body>;
+export type CategorizationPreviewInput = z.infer<
+  typeof categorizationPreviewSchema.shape.body
+>;
+export type BulkRecategorizeInput = z.infer<typeof bulkRecategorizeSchema.shape.body>;

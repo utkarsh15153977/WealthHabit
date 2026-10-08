@@ -18,6 +18,8 @@ import {
 import { AppError } from '../utils/errors.js';
 import { ApiErrorCodes } from '../types/errorCodes.js';
 import { recordAuditEvent, AuditActions } from '../services/auditLogService.js';
+import { upsertUserCategoryRule } from '../services/prismaTransactionCategoryRuleService.js';
+import { normalizeMerchant } from '../services/categorization/merchantNormalizer.js';
 import { prisma } from '../config/prisma.js';
 import {
   ImportedTransactionData,
@@ -151,7 +153,7 @@ export async function recategorizeImportedTransactionHandler(
 ): Promise<void> {
   const userId = getAuthenticatedUserId(req);
   const { id } = req.params as { id: string };
-  const { categoryId } = req.body as TransactionCategoryInput;
+  const { categoryId, rememberForMerchant } = req.body as TransactionCategoryInput;
 
   const existing = await getReviewableTransactionOrThrow(id, userId, 'recategorized');
 
@@ -169,7 +171,49 @@ export async function recategorizeImportedTransactionHandler(
     );
   }
 
+  // Validated before anything is written so a rejected request leaves both the
+  // transaction and the merchant rules untouched.
+  let normalizedMerchant: string | null = null;
+  if (rememberForMerchant) {
+    normalizedMerchant = normalizeMerchant(existing.merchant);
+    if (!normalizedMerchant) {
+      const message = 'Transaction has no merchant to remember';
+      throw new AppError(
+        message,
+        400,
+        { 'body.rememberForMerchant': [message] },
+        ApiErrorCodes.VALIDATION_ERROR
+      );
+    }
+  }
+
   const transaction = await recategorizeImportedTransaction(existing.id, categoryId);
+
+  let rememberedRuleId: string | null = null;
+  if (normalizedMerchant) {
+    const { rule, created } = await upsertUserCategoryRule(
+      userId,
+      normalizedMerchant,
+      categoryId
+    );
+    rememberedRuleId = rule.id;
+    await recordAuditEvent(
+      {
+        actorUserId: userId,
+        action: created
+          ? AuditActions.TRANSACTION_CATEGORY_RULE_CREATED
+          : AuditActions.TRANSACTION_CATEGORY_RULE_UPDATED,
+        entityType: 'transaction_category_rule',
+        entityId: rule.id,
+        metadata: {
+          ruleId: rule.id,
+          normalizedMerchant: rule.normalizedMerchant,
+          categoryId: rule.categoryId,
+        },
+      },
+      prisma
+    );
+  }
 
   await recordAuditEvent(
     {
@@ -182,6 +226,8 @@ export async function recategorizeImportedTransactionHandler(
         previousCategoryId: existing.categoryId,
         categoryId: transaction.categoryId,
         financialAccountId: transaction.financialAccountId,
+        ...(normalizedMerchant ? { normalizedMerchant } : {}),
+        ...(rememberedRuleId ? { ruleId: rememberedRuleId } : {}),
       },
     },
     prisma

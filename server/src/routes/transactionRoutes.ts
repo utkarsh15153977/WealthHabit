@@ -12,9 +12,15 @@ import {
   recategorizeImportedTransactionHandler,
   unlinkImportedTransactionHandler,
 } from '../controllers/importedTransactionController.js';
+import {
+  bulkRecategorizeImportedTransactionsHandler,
+  previewCategorizationHandler,
+} from '../controllers/transactionCategorizationController.js';
 import { validate } from '../middleware/validate.js';
 import { authenticate } from '../middleware/authMiddleware.js';
 import {
+  bulkRecategorizeSchema,
+  categorizationPreviewSchema,
   createTransactionSchema,
   listImportedTransactionsSchema,
   listTransactionsSchema,
@@ -43,6 +49,18 @@ router.get(
   authenticate,
   validate(listImportedTransactionsSchema),
   asyncHandler(listImportedTransactionsHandler)
+);
+router.post(
+  '/categorization-preview',
+  authenticate,
+  validate(categorizationPreviewSchema),
+  asyncHandler(previewCategorizationHandler)
+);
+router.post(
+  '/bulk-recategorize',
+  authenticate,
+  validate(bulkRecategorizeSchema),
+  asyncHandler(bulkRecategorizeImportedTransactionsHandler)
 );
 router.patch(
   '/:id/category',
