@@ -134,3 +134,33 @@ export const listTransactionsSchema = z.object({
 export type CreateTransactionInput = z.infer<typeof createTransactionSchema.shape.body>;
 export type UpdateTransactionInput = z.infer<typeof updateTransactionSchema.shape.body>;
 export type ListTransactionsQuery = z.infer<typeof listTransactionsSchema.shape.query>;
+
+export const listImportedTransactionsSchema = z.object({
+  query: z
+    .object({
+      type: z.enum(transactionTypeValues).optional(),
+      categoryId: z.string().min(1).optional(),
+      financialAccountId: z.string().min(1).optional(),
+      dateFrom: z.coerce.date().optional(),
+      dateTo: z.coerce.date().optional(),
+      page: z.coerce.number().int().min(1).optional(),
+      limit: z.coerce.number().int().min(1).max(100).optional(),
+    })
+    .strict(),
+});
+
+export const transactionCategorySchema = z.object({
+  params: z.object({
+    id: z.string().min(1, 'Transaction id is required'),
+  }),
+  body: z
+    .object({
+      categoryId: z.string().min(1, 'Category is required'),
+    })
+    .strict(),
+});
+
+export type ListImportedTransactionsQuery = z.infer<
+  typeof listImportedTransactionsSchema.shape.query
+>;
+export type TransactionCategoryInput = z.infer<typeof transactionCategorySchema.shape.body>;

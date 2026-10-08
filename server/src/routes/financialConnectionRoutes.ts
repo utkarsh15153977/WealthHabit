@@ -7,6 +7,7 @@ import {
   listFinancialAccounts,
   getFinancialAccount,
   syncFinancialAccountHandler,
+  getFinancialAccountSyncSummaryHandler,
 } from '../controllers/financialConnectionController.js';
 import { validate } from '../middleware/validate.js';
 import { authenticate } from '../middleware/authMiddleware.js';
@@ -34,6 +35,12 @@ accountsRouter.post(
   authenticate,
   validate(syncFinancialAccountSchema),
   asyncHandler(syncFinancialAccountHandler)
+);
+accountsRouter.get(
+  '/:id/sync-summary',
+  authenticate,
+  validate(accountIdParamSchema),
+  asyncHandler(getFinancialAccountSyncSummaryHandler)
 );
 
 export const financialConnectionRouter = router;

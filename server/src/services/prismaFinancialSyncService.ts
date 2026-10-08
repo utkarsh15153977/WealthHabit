@@ -231,8 +231,8 @@ export async function syncFinancialAccount(
   }
 
   const lock = doSync(accountId, userId, options)
-    .catch((error: unknown) => {
-      void recordSyncFailure(accountId, userId, error);
+    .catch(async (error: unknown) => {
+      await recordSyncFailure(accountId, userId, error);
       throw error;
     })
     .finally(() => {
@@ -241,6 +241,10 @@ export async function syncFinancialAccount(
 
   syncLocks.set(accountId, lock);
   return lock;
+}
+
+function toSafeSyncErrorMessage(error: unknown): string {
+  return error instanceof AppError ? error.message : 'Sync failed';
 }
 
 async function recordSyncFailure(
@@ -256,6 +260,15 @@ async function recordSyncFailure(
     if (!account) {
       return;
     }
+    const message = toSafeSyncErrorMessage(error);
+    await prisma.financialAccount.updateMany({
+      where: { id: accountId, userId },
+      data: { lastSyncError: message },
+    });
+    await prisma.financialConnection.update({
+      where: { id: account.connectionId },
+      data: { lastSyncError: message },
+    });
     await recordAuditEvent(
       {
         actorUserId: userId,
@@ -273,7 +286,7 @@ async function recordSyncFailure(
       prisma
     );
   } catch {
-    // Audit failure must never mask the original sync error.
+    // Audit/status failure must never mask the original sync error.
   }
 }
 
@@ -382,6 +395,17 @@ async function doSync(
                       externalTransactionId: { in: externalIds },
                     },
                     { userId, dedupKey: { in: dedupKeys } },
+                    // Rows that were unlinked from their account or converted
+                    // to manual keep their provider id but lose their account,
+                    // which defeats the (financialAccountId,
+                    // externalTransactionId) unique constraint. Matching them
+                    // by user + external id keeps a later sync from
+                    // re-importing a row the user already dismissed.
+                    {
+                      userId,
+                      financialAccountId: null,
+                      externalTransactionId: { in: externalIds },
+                    },
                   ],
                 },
                 select: { financialAccountId: true, externalTransactionId: true, dedupKey: true },
@@ -393,6 +417,11 @@ async function doSync(
             .filter((row) => row.externalTransactionId)
             .map((row) => `${row.financialAccountId}:${row.externalTransactionId}`)
         );
+        const seenUnlinkedExternalIds = new Set(
+          existingRows
+            .filter((row) => row.financialAccountId === null && row.externalTransactionId)
+            .map((row) => row.externalTransactionId as string)
+        );
         const seenDedupKeys = new Set(
           existingRows.map((row) => row.dedupKey).filter((key): key is string => key !== null)
         );
@@ -403,6 +432,9 @@ async function doSync(
             ? `${row.financialAccountId}:${row.externalTransactionId}`
             : null;
           if (externalKey && seenExternalIds.has(externalKey)) {
+            continue;
+          }
+          if (row.externalTransactionId && seenUnlinkedExternalIds.has(row.externalTransactionId)) {
             continue;
           }
           if (row.dedupKey && seenDedupKeys.has(row.dedupKey)) {
@@ -443,7 +475,16 @@ async function doSync(
 
         await tx.financialAccount.update({
           where: { id: account.id },
-          data: { lastSyncedAt: now },
+          data: {
+            lastSyncedAt: now,
+            lastSyncError: null,
+            lastSyncSummary: {
+              transactionsFetched: fetched,
+              transactionsImported: imported,
+              transactionsSkipped: fetched - imported,
+              syncedAt: now.toISOString(),
+            },
+          },
         });
 
         await tx.financialConnection.update({

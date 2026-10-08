@@ -284,6 +284,8 @@ model FinancialAccount {
   institutionName   String?
   isActive          Boolean              @default(true)
   lastSyncedAt      DateTime?
+  lastSyncError     String?
+  lastSyncSummary   Json?
   createdAt         DateTime             @default(now())
   updatedAt         DateTime             @updatedAt
 

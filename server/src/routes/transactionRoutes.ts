@@ -6,11 +6,19 @@ import {
   listTransactionsHandler,
   updateTransactionHandler,
 } from '../controllers/transactionController.js';
+import {
+  convertImportedTransactionToManualHandler,
+  listImportedTransactionsHandler,
+  recategorizeImportedTransactionHandler,
+  unlinkImportedTransactionHandler,
+} from '../controllers/importedTransactionController.js';
 import { validate } from '../middleware/validate.js';
 import { authenticate } from '../middleware/authMiddleware.js';
 import {
   createTransactionSchema,
+  listImportedTransactionsSchema,
   listTransactionsSchema,
+  transactionCategorySchema,
   transactionIdParamSchema,
   updateTransactionSchema,
 } from '../schemas/transactionSchemas.js';
@@ -29,6 +37,30 @@ router.post(
   authenticate,
   validate(createTransactionSchema),
   asyncHandler(createTransactionHandler)
+);
+router.get(
+  '/imported',
+  authenticate,
+  validate(listImportedTransactionsSchema),
+  asyncHandler(listImportedTransactionsHandler)
+);
+router.patch(
+  '/:id/category',
+  authenticate,
+  validate(transactionCategorySchema),
+  asyncHandler(recategorizeImportedTransactionHandler)
+);
+router.post(
+  '/:id/unlink',
+  authenticate,
+  validate(transactionIdParamSchema),
+  asyncHandler(unlinkImportedTransactionHandler)
+);
+router.post(
+  '/:id/convert-to-manual',
+  authenticate,
+  validate(transactionIdParamSchema),
+  asyncHandler(convertImportedTransactionToManualHandler)
 );
 router.get(
   '/:id',

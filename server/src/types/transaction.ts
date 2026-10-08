@@ -1,4 +1,4 @@
-import { TransactionType, CategoryType } from '@prisma/client';
+import { TransactionType, CategoryType, TransactionSource, FinancialAccountType } from '@prisma/client';
 
 export interface TransactionCategorySummary {
   id: string;
@@ -32,5 +32,36 @@ export interface PaginationMeta {
 
 export interface TransactionListData {
   transactions: TransactionData[];
+  pagination: PaginationMeta;
+}
+
+export interface ImportedTransactionAccountSummary {
+  id: string;
+  name: string;
+  mask: string | null;
+  type: FinancialAccountType;
+  currency: string;
+  institutionName: string | null;
+}
+
+export interface ImportedTransactionData {
+  id: string;
+  amount: number;
+  type: TransactionType;
+  description: string | null;
+  merchant: string | null;
+  transactionDate: Date;
+  paymentMethod: string | null;
+  paymentChannel: string | null;
+  category: TransactionCategorySummary;
+  financialAccountId: string | null;
+  financialAccount: ImportedTransactionAccountSummary | null;
+  source: TransactionSource;
+  externalTransactionId: string | null;
+  importedAt: Date | null;
+}
+
+export interface ImportedTransactionListData {
+  transactions: ImportedTransactionData[];
   pagination: PaginationMeta;
 }

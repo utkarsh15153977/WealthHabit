@@ -16,6 +16,7 @@ export interface FinancialAccountDto {
   institutionName: string | null;
   isActive: boolean;
   lastSyncedAt: Date | null;
+  lastSyncError: string | null;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -28,9 +29,25 @@ export interface FinancialConnectionDto {
   consentGivenAt: Date | null;
   revokedAt: Date | null;
   lastSyncedAt: Date | null;
+  lastSyncError: string | null;
   accounts: FinancialAccountDto[];
   createdAt: Date;
   updatedAt: Date;
+}
+
+export interface FinancialAccountSyncSummaryDto {
+  accountId: string;
+  accountName: string;
+  status: FinancialConnectionStatus;
+  isActive: boolean;
+  lastSyncedAt: Date | null;
+  lastSyncError: string | null;
+  lastSync: {
+    transactionsFetched: number;
+    transactionsImported: number;
+    transactionsSkipped: number;
+    syncedAt: string;
+  } | null;
 }
 
 export interface CreateFinancialConnectionInputDto {
