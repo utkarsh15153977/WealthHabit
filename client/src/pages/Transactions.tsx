@@ -9,6 +9,7 @@ import {
   Calendar,
   X,
   ReceiptText,
+  Building2,
 } from 'lucide-react';
 import { useForm } from 'react-hook-form';
 import { Link } from 'react-router-dom';
@@ -25,8 +26,14 @@ import {
   updateTransaction,
 } from '../services/transactionApi';
 import type { Category } from '../types/category';
-import type { Transaction, TransactionType } from '../types/transaction';
+import type {
+  Transaction,
+  TransactionAccountSummary,
+  TransactionSource,
+  TransactionType,
+} from '../types/transaction';
 import { formatDate, toDateInputValue, todayForDateInput } from '../utils/date';
+import { paymentChannelLabel } from '../utils/paymentChannel';
 
 const MONEY_PATTERN = /^\d+(\.\d{1,2})?$/;
 const MONEY_MAX = 9999999999999.99;
@@ -102,6 +109,37 @@ function optionalText(value: string | undefined): string | null {
   if (value === undefined) return null;
   const trimmed = value.trim();
   return trimmed === '' ? null : trimmed;
+}
+
+const SOURCE_LABELS: Record<TransactionSource, string> = {
+  IMPORTED: 'Imported',
+  MANUAL: 'Manual',
+};
+
+function formatAccountLabel(account: TransactionAccountSummary | null | undefined): string | null {
+  if (!account) return null;
+  return account.mask ? `${account.name} ............ ${account.mask}` : account.name;
+}
+
+interface TransactionDisplay {
+  title: string;
+  secondary: string | null;
+  sourceLabel: string | null;
+  accountLabel: string | null;
+  channelLabel: string | null;
+}
+
+function describeTransaction(transaction: Transaction): TransactionDisplay {
+  const title = transaction.merchant || transaction.description || '';
+  const secondary =
+    transaction.merchant && transaction.description ? transaction.description : null;
+  return {
+    title,
+    secondary,
+    sourceLabel: transaction.source ? SOURCE_LABELS[transaction.source] : null,
+    accountLabel: formatAccountLabel(transaction.financialAccount),
+    channelLabel: paymentChannelLabel(transaction.paymentChannel),
+  };
 }
 
 function createCurrencyFormatter(currency: string | null): (amount: number) => string {
@@ -401,6 +439,10 @@ export function Transactions() {
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-3 self-start sm:self-auto">
+            <Link to="/financial-connections" className="btn-secondary">
+              <Building2 className="w-4 h-4" aria-hidden="true" />
+              Financial Connections
+            </Link>
             <Link to="/transactions/imported" className="btn-secondary">
               <ReceiptText className="w-4 h-4" aria-hidden="true" />
               Imported Transactions
@@ -614,26 +656,131 @@ export function Transactions() {
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-border">
-                      {transactions.map((transaction) => (
-                        <tr key={transaction.id} className="hover:bg-background">
-                          <td className="px-4 py-3 whitespace-nowrap text-text-muted">
-                            {formatDate(transaction.transactionDate)}
-                          </td>
-                          <td className="px-4 py-3 text-text">
-                            {transaction.description || (
-                              <span className="text-text-muted">No description</span>
+                      {transactions.map((transaction) => {
+                        const display = describeTransaction(transaction);
+                        const supportLine = [display.accountLabel, display.channelLabel]
+                          .filter(Boolean)
+                          .join(' · ');
+                        return (
+                          <tr key={transaction.id} className="hover:bg-background">
+                            <td className="px-4 py-3 whitespace-nowrap text-text-muted">
+                              {formatDate(transaction.transactionDate)}
+                            </td>
+                            <td className="px-4 py-3 text-text">
+                              <p className="truncate">
+                                {display.title || (
+                                  <span className="text-text-muted">No description</span>
+                                )}
+                              </p>
+                              {display.secondary && (
+                                <p className="text-xs text-text-muted mt-0.5 truncate">
+                                  {display.secondary}
+                                </p>
+                              )}
+                              {supportLine && (
+                                <p className="text-xs text-text-muted mt-0.5 truncate">
+                                  {supportLine}
+                                </p>
+                              )}
+                            </td>
+                            <td className="px-4 py-3">
+                              <span className="inline-flex items-center gap-1.5">
+                                <span
+                                  className="w-2 h-2 rounded-full bg-primary flex-shrink-0"
+                                  aria-hidden="true"
+                                />
+                                {transaction.category.name}
+                              </span>
+                            </td>
+                            <td className="px-4 py-3">
+                              <div className="flex flex-wrap items-center gap-1.5">
+                                <span
+                                  className={
+                                    transaction.type === 'INCOME'
+                                      ? 'badge badge-success'
+                                      : 'badge badge-warning'
+                                  }
+                                >
+                                  {transaction.type === 'INCOME' ? 'Income' : 'Expense'}
+                                </span>
+                                {display.sourceLabel && (
+                                  <span
+                                    className={
+                                      transaction.source === 'IMPORTED'
+                                        ? 'badge badge-info'
+                                        : 'badge badge-primary'
+                                    }
+                                    data-testid={`transaction-source-${transaction.id}`}
+                                  >
+                                    {display.sourceLabel}
+                                  </span>
+                                )}
+                              </div>
+                            </td>
+                            <td className="px-4 py-3 text-text-muted">
+                              {transaction.paymentMethod || '—'}
+                            </td>
+                            <td
+                              className={`px-4 py-3 text-right font-medium whitespace-nowrap ${
+                                transaction.type === 'INCOME' ? 'text-success' : 'text-error'
+                              }`}
+                            >
+                              {transaction.type === 'INCOME' ? '+' : '−'}
+                              {formatAmount(transaction.amount)}
+                            </td>
+                            <td className="px-4 py-3">
+                              <div className="flex items-center justify-end gap-1">
+                                <button
+                                  type="button"
+                                  className="btn-ghost p-2"
+                                  aria-label={`Edit transaction ${display.title || transaction.id}`}
+                                  onClick={() => openEditForm(transaction)}
+                                >
+                                  <Pencil className="w-4 h-4" aria-hidden="true" />
+                                </button>
+                                <button
+                                  type="button"
+                                  className="btn-ghost p-2 text-error hover:bg-red-50"
+                                  aria-label={`Delete transaction ${display.title || transaction.id}`}
+                                  onClick={() => setDeleteTarget(transaction)}
+                                >
+                                  <Trash2 className="w-4 h-4" aria-hidden="true" />
+                                </button>
+                              </div>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+              {/* Mobile cards */}
+              <div className="md:hidden space-y-3">
+                {transactions.map((transaction) => {
+                  const display = describeTransaction(transaction);
+                  const supportLine = [display.accountLabel, display.channelLabel]
+                    .filter(Boolean)
+                    .join(' · ');
+                  return (
+                    <div key={transaction.id} className="card">
+                      <div className="card-body p-4">
+                        <div className="flex items-start justify-between gap-3 mb-3">
+                          <div className="min-w-0">
+                            <p className="font-medium text-text truncate">
+                              {display.title || 'No description'}
+                            </p>
+                            {display.secondary && (
+                              <p className="text-xs text-text-muted mt-0.5 truncate">
+                                {display.secondary}
+                              </p>
                             )}
-                          </td>
-                          <td className="px-4 py-3">
-                            <span className="inline-flex items-center gap-1.5">
-                              <span
-                                className="w-2 h-2 rounded-full bg-primary flex-shrink-0"
-                                aria-hidden="true"
-                              />
+                            <p className="text-sm text-text-muted mt-0.5">
                               {transaction.category.name}
-                            </span>
-                          </td>
-                          <td className="px-4 py-3">
+                            </p>
+                          </div>
+                          <div className="flex flex-col items-end gap-1 flex-shrink-0">
                             <span
                               className={
                                 transaction.type === 'INCOME'
@@ -643,112 +790,69 @@ export function Transactions() {
                             >
                               {transaction.type === 'INCOME' ? 'Income' : 'Expense'}
                             </span>
-                          </td>
-                          <td className="px-4 py-3 text-text-muted">
-                            {transaction.paymentMethod || '—'}
-                          </td>
-                          <td
-                            className={`px-4 py-3 text-right font-medium whitespace-nowrap ${
+                            {display.sourceLabel && (
+                              <span
+                                className={
+                                  transaction.source === 'IMPORTED'
+                                    ? 'badge badge-info'
+                                    : 'badge badge-primary'
+                                }
+                              >
+                                {display.sourceLabel}
+                              </span>
+                            )}
+                          </div>
+                        </div>
+
+                        <div className="flex items-center justify-between gap-3">
+                          <div className="flex items-center gap-1.5 text-sm text-text-muted">
+                            <Calendar className="w-4 h-4" aria-hidden="true" />
+                            {formatDate(transaction.transactionDate)}
+                          </div>
+                          <p
+                            className={`font-semibold ${
                               transaction.type === 'INCOME' ? 'text-success' : 'text-error'
                             }`}
                           >
                             {transaction.type === 'INCOME' ? '+' : '−'}
                             {formatAmount(transaction.amount)}
-                          </td>
-                          <td className="px-4 py-3">
-                            <div className="flex items-center justify-end gap-1">
-                              <button
-                                type="button"
-                                className="btn-ghost p-2"
-                                aria-label={`Edit transaction ${transaction.description || transaction.id}`}
-                                onClick={() => openEditForm(transaction)}
-                              >
-                                <Pencil className="w-4 h-4" aria-hidden="true" />
-                              </button>
-                              <button
-                                type="button"
-                                className="btn-ghost p-2 text-error hover:bg-red-50"
-                                aria-label={`Delete transaction ${transaction.description || transaction.id}`}
-                                onClick={() => setDeleteTarget(transaction)}
-                              >
-                                <Trash2 className="w-4 h-4" aria-hidden="true" />
-                              </button>
-                            </div>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-
-              {/* Mobile cards */}
-              <div className="md:hidden space-y-3">
-                {transactions.map((transaction) => (
-                  <div key={transaction.id} className="card">
-                    <div className="card-body p-4">
-                      <div className="flex items-start justify-between gap-3 mb-3">
-                        <div className="min-w-0">
-                          <p className="font-medium text-text truncate">
-                            {transaction.description || 'No description'}
-                          </p>
-                          <p className="text-sm text-text-muted mt-0.5">
-                            {transaction.category.name}
                           </p>
                         </div>
-                        <span
-                          className={
-                            transaction.type === 'INCOME' ? 'badge badge-success' : 'badge badge-warning'
-                          }
-                        >
-                          {transaction.type === 'INCOME' ? 'Income' : 'Expense'}
-                        </span>
-                      </div>
 
-                      <div className="flex items-center justify-between gap-3">
-                        <div className="flex items-center gap-1.5 text-sm text-text-muted">
-                          <Calendar className="w-4 h-4" aria-hidden="true" />
-                          {formatDate(transaction.transactionDate)}
+                        {transaction.paymentMethod && (
+                          <p className="text-xs text-text-muted mt-2">
+                            Paid via {transaction.paymentMethod}
+                          </p>
+                        )}
+
+                        {supportLine && (
+                          <p className="text-xs text-text-muted mt-1 truncate">{supportLine}</p>
+                        )}
+
+                        <div className="flex items-center justify-end gap-2 mt-3 pt-3 border-t border-border">
+                          <button
+                            type="button"
+                            className="btn-ghost btn-sm"
+                            aria-label={`Edit transaction ${display.title || transaction.id}`}
+                            onClick={() => openEditForm(transaction)}
+                          >
+                            <Pencil className="w-4 h-4" aria-hidden="true" />
+                            Edit
+                          </button>
+                          <button
+                            type="button"
+                            className="btn-ghost btn-sm text-error hover:bg-red-50"
+                            aria-label={`Delete transaction ${display.title || transaction.id}`}
+                            onClick={() => setDeleteTarget(transaction)}
+                          >
+                            <Trash2 className="w-4 h-4" aria-hidden="true" />
+                            Delete
+                          </button>
                         </div>
-                        <p
-                          className={`font-semibold ${
-                            transaction.type === 'INCOME' ? 'text-success' : 'text-error'
-                          }`}
-                        >
-                          {transaction.type === 'INCOME' ? '+' : '−'}
-                          {formatAmount(transaction.amount)}
-                        </p>
-                      </div>
-
-                      {transaction.paymentMethod && (
-                        <p className="text-xs text-text-muted mt-2">
-                          Paid via {transaction.paymentMethod}
-                        </p>
-                      )}
-
-                      <div className="flex items-center justify-end gap-2 mt-3 pt-3 border-t border-border">
-                        <button
-                          type="button"
-                          className="btn-ghost btn-sm"
-                          aria-label={`Edit transaction ${transaction.description || transaction.id}`}
-                          onClick={() => openEditForm(transaction)}
-                        >
-                          <Pencil className="w-4 h-4" aria-hidden="true" />
-                          Edit
-                        </button>
-                        <button
-                          type="button"
-                          className="btn-ghost btn-sm text-error hover:bg-red-50"
-                          aria-label={`Delete transaction ${transaction.description || transaction.id}`}
-                          onClick={() => setDeleteTarget(transaction)}
-                        >
-                          <Trash2 className="w-4 h-4" aria-hidden="true" />
-                          Delete
-                        </button>
                       </div>
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
 
               {/* Pagination */}

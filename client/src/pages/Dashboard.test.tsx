@@ -1,5 +1,5 @@
 ﻿import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, within, waitFor } from '@testing-library/react';
+import { render, screen, within, waitFor, fireEvent } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { Dashboard } from './Dashboard';
 import { getDashboardSummary } from '../services/dashboardApi';
@@ -12,10 +12,12 @@ import { habitApi } from '../services/habitApi';
 import { challengeApi } from '../services/challengeApi';
 import { goalApi } from '../services/goalApi';
 import { assetLiabilityApi } from '../services/assetLiabilityApi';
+import { financialApi } from '../services/financialApi';
 import type { DashboardSummaryData } from '../types/dashboard';
 import type { HabitWithProgress } from '../types/habit';
 import type { Challenge, ChallengeListResponse } from '../types/challenge';
 import type { Goal, GoalListResponse } from '../types/goal';
+import type { FinancialConnection, ImportedTransaction } from '../types/financial';
 
 vi.mock('../services/dashboardApi', () => ({
   getDashboardSummary: vi.fn(),
@@ -64,6 +66,13 @@ vi.mock('../services/assetLiabilityApi', () => ({
   assetLiabilityApi: { getAssetsLiabilitiesSummary: vi.fn() },
 }));
 
+vi.mock('../services/financialApi', () => ({
+  financialApi: {
+    listFinancialConnections: vi.fn(),
+    listImportedTransactions: vi.fn(),
+  },
+}));
+
 vi.mock('../context/useAuth', () => ({
   useAuth: () => ({
     user: { id: 'u1', firstName: 'Ada', lastName: 'Lovelace', email: 'ada@example.com' },
@@ -79,6 +88,16 @@ const mockedGoals = vi.mocked(goalApi.getGoals);
 const mockedAssetLiabilitySummary = vi.mocked(
   assetLiabilityApi.getAssetsLiabilitiesSummary
 );
+const mockedListFinancialConnections = vi.mocked(financialApi.listFinancialConnections);
+const mockedListImportedTransactions = vi.mocked(financialApi.listImportedTransactions);
+
+function setFinancialDefaults() {
+  mockedListFinancialConnections.mockResolvedValue([]);
+  mockedListImportedTransactions.mockResolvedValue({
+    transactions: [],
+    pagination: { page: 1, limit: 5, total: 0, totalPages: 0 },
+  });
+}
 
 const zeroAssetLiabilitySummary = {
   totalAssets: 0,
@@ -240,9 +259,91 @@ function renderDashboard() {
   );
 }
 
+function makeAccount(
+  id: string,
+  name: string,
+  mask: string | null,
+  type: FinancialConnection['accounts'][number]['type'] = 'SAVINGS'
+): FinancialConnection['accounts'][number] {
+  return {
+    id,
+    externalAccountId: `ext-${id}`,
+    name,
+    mask,
+    type,
+    currency: 'USD',
+    institutionName: 'Demo Bank',
+    isActive: true,
+    lastSyncedAt: '2026-09-25T00:00:00.000Z',
+    lastSyncError: null,
+    createdAt: '2026-09-01T00:00:00.000Z',
+    updatedAt: '2026-09-25T00:00:00.000Z',
+  };
+}
+
+function makeConnection(
+  id: string,
+  institutionName: string,
+  accounts: FinancialConnection['accounts'],
+  overrides: Partial<FinancialConnection> = {}
+): FinancialConnection {
+  return {
+    id,
+    provider: 'MOCK',
+    status: 'ACTIVE',
+    institutionName,
+    consentGivenAt: '2026-09-01T00:00:00.000Z',
+    revokedAt: null,
+    lastSyncedAt: '2026-09-25T00:00:00.000Z',
+    lastSyncError: null,
+    accounts,
+    createdAt: '2026-09-01T00:00:00.000Z',
+    updatedAt: '2026-09-25T00:00:00.000Z',
+    ...overrides,
+  };
+}
+
+function makeImportedTransaction(
+  id: string,
+  overrides: Partial<ImportedTransaction> = {}
+): ImportedTransaction {
+  return {
+    id,
+    amount: 42.5,
+    type: 'EXPENSE',
+    description: null,
+    merchant: 'Coffee Roasters',
+    transactionDate: '2026-09-24T00:00:00.000Z',
+    paymentMethod: 'Card',
+    paymentChannel: 'CARD',
+    category: {
+      id: 'cat-food',
+      name: 'Food',
+      type: 'EXPENSE',
+      icon: null,
+      color: null,
+      isDefault: false,
+    },
+    financialAccountId: 'acc-1',
+    financialAccount: {
+      id: 'acc-1',
+      name: 'Everyday Checking',
+      mask: '1234',
+      type: 'CURRENT',
+      currency: 'USD',
+      institutionName: 'Demo Bank',
+    },
+    source: 'IMPORTED',
+    externalTransactionId: `ext-tx-${id}`,
+    importedAt: '2026-09-25T00:00:00.000Z',
+    ...overrides,
+  };
+}
+
 describe('Dashboard habit summary card', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    setFinancialDefaults();
     mockedAssetLiabilitySummary.mockResolvedValue(zeroAssetLiabilitySummary);
     mockedSummary.mockResolvedValue(emptySummary);
     vi.mocked(budgetApi.getBudgets).mockResolvedValue({
@@ -347,6 +448,7 @@ describe('Dashboard habit summary card', () => {
 describe('Dashboard challenges card', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    setFinancialDefaults();
     mockedAssetLiabilitySummary.mockResolvedValue(zeroAssetLiabilitySummary);
     mockedSummary.mockResolvedValue(emptySummary);
     vi.mocked(budgetApi.getBudgets).mockResolvedValue({
@@ -454,6 +556,7 @@ describe('Dashboard challenges card', () => {
 describe('Dashboard savings goals card', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    setFinancialDefaults();
     mockedAssetLiabilitySummary.mockResolvedValue(zeroAssetLiabilitySummary);
     mockedSummary.mockResolvedValue(emptySummary);
     vi.mocked(budgetApi.getBudgets).mockResolvedValue({
@@ -566,6 +669,7 @@ describe('Dashboard savings goals card', () => {
 describe('Dashboard budgets card pagination', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    setFinancialDefaults();
     mockedAssetLiabilitySummary.mockResolvedValue(zeroAssetLiabilitySummary);
     mockedSummary.mockResolvedValue(emptySummary);
     vi.mocked(budgetApi.getBudgets).mockResolvedValue({
@@ -631,6 +735,7 @@ describe('Dashboard budgets card pagination', () => {
 describe('Dashboard assets and liabilities card', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    setFinancialDefaults();
     mockedAssetLiabilitySummary.mockResolvedValue(zeroAssetLiabilitySummary);
     mockedSummary.mockResolvedValue(emptySummary);
     vi.mocked(budgetApi.getBudgets).mockResolvedValue({
@@ -789,5 +894,151 @@ describe('Dashboard assets and liabilities card', () => {
     expect(
       screen.queryByTestId('dashboard-asset-liability-summary')
     ).toBeNull();
+  });
+});
+
+describe('Dashboard financial connections integration', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    setFinancialDefaults();
+    mockedAssetLiabilitySummary.mockResolvedValue(zeroAssetLiabilitySummary);
+    mockedSummary.mockResolvedValue(emptySummary);
+    vi.mocked(budgetApi.getBudgets).mockResolvedValue({
+      budgets: [],
+      page: 1,
+      pageSize: 20,
+      total: 0,
+    } as Awaited<ReturnType<typeof budgetApi.getBudgets>>);
+    vi.mocked(
+      recurringTransactionApi.getRecurringTransactions
+    ).mockResolvedValue({
+      recurringTransactions: [],
+      page: 1,
+      pageSize: 20,
+      total: 0,
+    } as Awaited<
+      ReturnType<typeof recurringTransactionApi.getRecurringTransactions>
+    >);
+    vi.mocked(billApi.getBills).mockResolvedValue({
+      bills: [],
+      page: 1,
+      pageSize: 20,
+      total: 0,
+    } as Awaited<ReturnType<typeof billApi.getBills>>);
+    vi.mocked(subscriptionApi.getSubscriptions).mockResolvedValue({
+      subscriptions: [],
+      page: 1,
+      pageSize: 20,
+      total: 0,
+    } as Awaited<ReturnType<typeof subscriptionApi.getSubscriptions>>);
+    vi.mocked(notificationApi.getUnreadCount).mockResolvedValue({
+      unreadCount: 0,
+    });
+    vi.mocked(notificationApi.generateNotifications).mockResolvedValue({
+      created: 0,
+    });
+    mockedHabits.mockResolvedValue({
+      habits: [],
+      page: 1,
+      pageSize: 50,
+      total: 0,
+    });
+    mockedChallenges.mockResolvedValue(emptyChallengeList);
+    mockedGoals.mockResolvedValue(emptyGoalList);
+  });
+
+  it('lists connections with counts, masked accounts and sync status', async () => {
+    mockedListFinancialConnections.mockResolvedValue([
+      makeConnection('c1', 'Demo Bank', [
+        makeAccount('a1', 'Everyday Checking', '1234', 'CURRENT'),
+        makeAccount('a2', 'Rainy Day Savings', null, 'SAVINGS'),
+      ]),
+    ]);
+
+    renderDashboard();
+
+    const card = await screen.findByTestId('dashboard-connected-accounts-list');
+    expect(screen.getByTestId('dashboard-connected-accounts-count')).toHaveTextContent(
+      '1 connection'
+    );
+    expect(screen.getByTestId('dashboard-connected-accounts-count')).toHaveTextContent(
+      '2 accounts'
+    );
+    expect(within(card).getByText('Demo Bank')).toBeDefined();
+    expect(within(card).getByText('Active')).toBeDefined();
+    expect(within(card).getByText('•••• 1234')).toBeDefined();
+  });
+
+  it('shows the connected accounts empty state with a connect link', async () => {
+    renderDashboard();
+
+    const empty = await screen.findByTestId('dashboard-connected-accounts-empty');
+    expect(
+      within(empty).getByRole('link', { name: /Connect an account/i })
+    ).toHaveAttribute('href', '/financial-connections');
+  });
+
+  it('shows an inline error for connections and retries', async () => {
+    mockedListFinancialConnections.mockRejectedValueOnce(
+      new Error('Connections unavailable')
+    );
+
+    renderDashboard();
+
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent('Connections unavailable');
+
+    mockedListFinancialConnections.mockResolvedValueOnce([
+      makeConnection('c1', 'Demo Bank', [makeAccount('a1', 'Checking', '9999')]),
+    ]);
+    fireEvent.click(screen.getByRole('button', { name: /Retry/i }));
+
+    expect(await screen.findByTestId('dashboard-connected-accounts-list')).toBeDefined();
+  });
+
+  it('renders imported transactions with merchant, category, amount and account', async () => {
+    mockedListImportedTransactions.mockResolvedValue({
+      transactions: [makeImportedTransaction('t1')],
+      pagination: { page: 1, limit: 5, total: 1, totalPages: 1 },
+    });
+
+    renderDashboard();
+
+    const list = await screen.findByTestId('dashboard-financial-activity');
+    expect(within(list).getByText('Coffee Roasters')).toBeDefined();
+    expect(within(list).getByText(/Food/)).toBeDefined();
+    expect(list).toHaveTextContent('42.50');
+    expect(list).toHaveTextContent('Everyday Checking');
+    expect(within(list).getByText('Imported')).toBeDefined();
+    expect(mockedListImportedTransactions).toHaveBeenCalledWith({
+      page: 1,
+      limit: 5,
+    });
+  });
+
+  it('shows the imported activity empty state', async () => {
+    renderDashboard();
+
+    const empty = await screen.findByTestId('dashboard-financial-activity-empty');
+    expect(within(empty).getByText('No imported transactions yet.')).toBeDefined();
+  });
+
+  it('shows an inline error for imported activity and retries', async () => {
+    mockedListImportedTransactions.mockRejectedValueOnce(
+      new Error('Imported unavailable')
+    );
+
+    renderDashboard();
+
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent('Imported unavailable');
+
+    mockedListImportedTransactions.mockResolvedValueOnce({
+      transactions: [makeImportedTransaction('t1')],
+      pagination: { page: 1, limit: 5, total: 1, totalPages: 1 },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /Retry/i }));
+
+    expect(await screen.findByTestId('dashboard-financial-activity')).toBeDefined();
   });
 });
