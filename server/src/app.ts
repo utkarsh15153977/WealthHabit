@@ -8,6 +8,7 @@ import { securityHeaderOptions } from './config/securityHeaders.js';
 import { errorHandler, notFoundHandler } from './middleware/errorHandler.js';
 import { requestLogger } from './middleware/logger.js';
 import { requestIdMiddleware } from './middleware/requestId.js';
+import { noStoreApiResponses } from './middleware/cacheControl.js';
 import { apiRateLimit } from './middleware/rateLimit.js';
 import healthRoutes from './routes/healthRoutes.js';
 import authRoutes from './routes/authRoutes.js';
@@ -56,13 +57,26 @@ app.use(cors({
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization'],
+  // Cache the preflight result in the browser so a burst of authenticated
+  // calls costs one OPTIONS round trip instead of one per request. OPTIONS
+  // still consumes the rate-limit budget, so keeping preflights rare matters.
+  maxAge: 600,
 }));
 
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
+// Explicit rather than implicit: the body must stay bounded even if the
+// dependency's default ever changes. 100kb is body-parser's default and is
+// far more than the largest legitimate payload here (a 100-row bulk
+// recategorization request).
+app.use(express.json({ limit: '100kb' }));
+app.use(express.urlencoded({ extended: true, limit: '100kb' }));
 app.use(cookieParser());
 
 app.use(morgan(env.isDevelopment ? 'dev' : 'combined'));
+
+// Financial payloads must never be cached. Mounted before the routers so a
+// handler can still override it (reports and the MFA code page send their own
+// `no-store`).
+app.use(noStoreApiResponses);
 
 app.use('/api', healthRoutes);
 app.use('/api/auth', authRoutes);

@@ -330,6 +330,21 @@ export async function refresh(
     throw new AppError('User not found', 401, undefined, AuthErrorCodes.UNAUTHORIZED);
   }
 
+  // Refresh must not extend the life of a session belonging to an account that
+  // is no longer active. The access token minted below would be rejected by
+  // `authenticate` regardless (it re-reads status from the database on every
+  // request), but the session row and the refresh cookie must not be renewed
+  // either — otherwise a suspension leaves a usable refresh path behind.
+  if (user.status !== 'ACTIVE') {
+    if (user.status === 'SUSPENDED') {
+      throw new AppError('Account suspended', 403, undefined, AuthErrorCodes.ACCOUNT_SUSPENDED);
+    }
+    if (user.status === 'DEACTIVATED') {
+      throw new AppError('Account deactivated', 403, undefined, AuthErrorCodes.ACCOUNT_DEACTIVATED);
+    }
+    throw new AppError('Account not active', 403, undefined, AuthErrorCodes.ACCOUNT_SUSPENDED);
+  }
+
   const newRefreshToken = authService.generateRefreshToken();
   const newRefreshTokenHash = authService.hashRefreshToken(newRefreshToken);
   const newExpiresAt = authService.calculateRefreshExpiry();

@@ -15,11 +15,38 @@ export interface Logger {
   error(message: string, context?: LogContext): void;
 }
 
+/**
+ * Context keys whose *value* is a secret on sight alone (`accessToken`,
+ * `apiKey`, `password`, ...). Such a value is replaced wholesale: it does not
+ * need to look like `name=value` to be dangerous.
+ */
+const SENSITIVE_CONTEXT_KEY = /(?:PASSWORD|SECRET|TOKEN|KEY)/i;
+
 function sanitizeContext(context: LogContext): LogContext {
   const safe: LogContext = {};
   for (const [key, value] of Object.entries(context)) {
     if (value === undefined) continue;
-    safe[key] = typeof value === 'string' ? sanitizeErrorMessage(value) : value;
+    if (SENSITIVE_CONTEXT_KEY.test(key)) {
+      safe[key] = '[redacted]';
+      continue;
+    }
+    if (typeof value === 'string') {
+      safe[key] = sanitizeErrorMessage(value);
+      continue;
+    }
+    if (value === null || typeof value !== 'object') {
+      safe[key] = value;
+      continue;
+    }
+    // `LogContext` is primitives only at the type level, but types are not
+    // runtime enforcement. If an object ever gets through, serialize it and
+    // redact the serialization so a nested secret cannot reach the log as an
+    // unexamined blob.
+    try {
+      safe[key] = sanitizeErrorMessage(JSON.stringify(value) ?? String(value));
+    } catch {
+      safe[key] = '[unserializable]';
+    }
   }
   return safe;
 }
@@ -31,8 +58,11 @@ export interface FormatOptions {
 
 /**
  * Builds one log record. Every string (message and context values) passes
- * through `sanitizeErrorMessage`, so no caller can bypass the 5G.3
- * redaction protection.
+ * through `sanitizeErrorMessage`, and context keys that name a secret have
+ * their value dropped before anything is assembled — so the record is safe to
+ * emit as-is, in either format. Neither branch is re-scanned afterwards: a
+ * second pass over the encoded record would only be able to rewrite things
+ * like `password":"x"` and would corrupt the record while doing it.
  */
 export function formatLogEntry(
   level: LogLevel,

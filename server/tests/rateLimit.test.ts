@@ -15,6 +15,8 @@ import {
   resetPasswordRateLimit,
   FORGOT_PASSWORD_RATE_LIMIT_MAX,
   RESET_PASSWORD_RATE_LIMIT_MAX,
+  healthReadinessRateLimit,
+  HEALTH_READINESS_RATE_LIMIT_MAX,
 } from '../src/middleware/rateLimit.js';
 
 const API_LIMIT = String(env.isDevelopment ? 500 : 100);
@@ -317,5 +319,35 @@ describe('rate limiter separation and store', () => {
     apiRateLimit.resetKey(key!);
     expect(await countedKey(authRateLimit)).toBeUndefined();
     expect(await countedKey(apiRateLimit)).toBeUndefined();
+  });
+});
+
+describe('readiness probe rate limiting', () => {
+  it('applies a dedicated budget to the probe that performs a database round trip', async () => {
+    const response = await request(app).get('/api/health/ready');
+
+    expect(response.status).toBe(200);
+    // Liveness stays exempt (asserted above); readiness does not, because it
+    // is unauthenticated and mounted ahead of the general API limiter.
+    expect(response.headers['ratelimit-limit']).toBe(
+      String(HEALTH_READINESS_RATE_LIMIT_MAX)
+    );
+  });
+
+  it('stops an unauthenticated flood once the readiness budget is spent', async () => {
+    for (let i = 0; i < HEALTH_READINESS_RATE_LIMIT_MAX; i += 1) {
+      await request(app).get('/api/health/ready');
+    }
+
+    const blocked = await request(app).get('/api/health/ready');
+
+    expect(blocked.status).toBe(429);
+    expect(blocked.body.success).toBe(false);
+    expect(blocked.body.error.code).toBe('RATE_LIMIT_EXCEEDED');
+
+    // Leave the bucket empty for any later test in this file.
+    for (const key of CLIENT_KEYS) {
+      healthReadinessRateLimit.resetKey(key);
+    }
   });
 });

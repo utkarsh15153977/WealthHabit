@@ -64,9 +64,20 @@ export async function updateCategory(
   });
 }
 
-export async function countCategoryTransactions(categoryId: string): Promise<number> {
+/**
+ * Counts the caller's transactions pointing at a category.
+ *
+ * `userId` is part of the predicate even though every caller proves ownership
+ * of the category first: the query must never be able to read across tenants
+ * if it is ever reached another way, and the count is only meaningful for the
+ * user who is allowed to delete the category.
+ */
+export async function countCategoryTransactions(
+  categoryId: string,
+  userId: string
+): Promise<number> {
   return prisma.transaction.count({
-    where: { categoryId },
+    where: { categoryId, userId },
   });
 }
 

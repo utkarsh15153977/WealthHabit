@@ -2,12 +2,16 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import request from 'supertest';
 import express from 'express';
 import cookieParser from 'cookie-parser';
+import { ipKeyGenerator } from 'express-rate-limit';
 import { testPrisma, createTestUser } from './setup.js';
 import { hashPassword } from '../src/services/authService.js';
 import { Role, AccountStatus } from '@prisma/client';
 import { env } from '../src/config/index.js';
 import { errorHandler } from '../src/middleware/errorHandler.js';
+import { authRateLimit } from '../src/middleware/rateLimit.js';
 import authRoutes from '../src/routes/authRoutes.js';
+
+const CLIENT_KEYS = ['127.0.0.1', '::1'].map((ip) => ipKeyGenerator(ip, 56));
 
 describe('Auth Controller - Refresh Token Reuse Detection', () => {
   let testUser: { email: string; password: string; firstName: string; lastName: string };
@@ -16,6 +20,14 @@ describe('Auth Controller - Refresh Token Reuse Detection', () => {
   let app: express.Express;
 
   beforeEach(async () => {
+    // Every auth route sits behind the per-IP auth limiter (20 requests per
+    // window outside development). Tests share one client IP while each one
+    // creates a fresh user, so the IP bucket is reset here. The limiter's own
+    // behaviour is asserted in rateLimit.test.ts, not by this file.
+    for (const key of CLIENT_KEYS) {
+      authRateLimit.resetKey(key);
+    }
+
     testUser = createTestUser();
     passwordHash = await hashPassword(testUser.password);
 
@@ -60,6 +72,56 @@ describe('Auth Controller - Refresh Token Reuse Detection', () => {
     expect(res.status).toBe(200);
     expect(res.body.success).toBe(true);
     expect(res.body.data.accessToken).toBeDefined();
+  });
+
+  it('should refuse to refresh a suspended account without rotating the session', async () => {
+    const { refreshCookie } = await loginAndGetTokens();
+
+    await testPrisma.user.update({
+      where: { id: userId },
+      data: { status: AccountStatus.SUSPENDED },
+    });
+
+    const res = await request(app)
+      .post('/api/auth/refresh')
+      .set('Cookie', refreshCookie);
+
+    expect(res.status).toBe(403);
+    expect(res.body.success).toBe(false);
+    expect(res.body.error.code).toBe('ACCOUNT_SUSPENDED');
+    // The rejection happens before rotation: no new refresh cookie, and the
+    // session row keeps its original refresh token.
+    expect(res.headers['set-cookie']).toBeUndefined();
+
+    await testPrisma.user.update({
+      where: { id: userId },
+      data: { status: AccountStatus.ACTIVE },
+    });
+
+    const afterReactivation = await request(app)
+      .post('/api/auth/refresh')
+      .set('Cookie', refreshCookie);
+
+    expect(afterReactivation.status).toBe(200);
+    expect(afterReactivation.body.success).toBe(true);
+    expect(afterReactivation.body.data.accessToken).toBeDefined();
+  });
+
+  it('should refuse to refresh a deactivated account', async () => {
+    const { refreshCookie } = await loginAndGetTokens();
+
+    await testPrisma.user.update({
+      where: { id: userId },
+      data: { status: AccountStatus.DEACTIVATED },
+    });
+
+    const res = await request(app)
+      .post('/api/auth/refresh')
+      .set('Cookie', refreshCookie);
+
+    expect(res.status).toBe(403);
+    expect(res.body.error.code).toBe('ACCOUNT_DEACTIVATED');
+    expect(res.headers['set-cookie']).toBeUndefined();
   });
 
   it('should reject old refresh token after rotation (reuse detection)', async () => {

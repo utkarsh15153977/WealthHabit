@@ -30,6 +30,16 @@ const importedTransactionInclude = {
   financialAccount: true,
 } satisfies Prisma.TransactionInclude;
 
+/**
+ * Defence-in-depth pagination bounds, mirroring `MAX_LIST_PAGE_SIZE` in the
+ * budget/asset/liability/goal/snapshot services. The request schemas already
+ * cap `limit` at 100, so this never changes a validated request — it exists so
+ * that a future route or internal caller that reaches `listUserTransactions`
+ * without going through `validate()` still cannot ask for an unbounded page.
+ */
+export const DEFAULT_PAGE_SIZE = 20;
+export const MAX_LIST_PAGE_SIZE = 100;
+
 export async function createTransaction(
   userId: string,
   input: CreateTransactionInput
@@ -54,7 +64,7 @@ export async function listUserTransactions(
   query: ListTransactionsQuery
 ): Promise<{ transactions: TransactionWithCategory[]; total: number; page: number; limit: number }> {
   const page = query?.page ?? 1;
-  const limit = query?.limit ?? 20;
+  const limit = Math.min(query?.limit ?? DEFAULT_PAGE_SIZE, MAX_LIST_PAGE_SIZE);
   const skip = (page - 1) * limit;
 
   const and: Prisma.TransactionWhereInput[] = [{ userId }];
@@ -180,7 +190,7 @@ export async function listUserImportedTransactions(
   limit: number;
 }> {
   const page = query?.page ?? 1;
-  const limit = query?.limit ?? 20;
+  const limit = Math.min(query?.limit ?? DEFAULT_PAGE_SIZE, MAX_LIST_PAGE_SIZE);
   const skip = (page - 1) * limit;
 
   const and: Prisma.TransactionWhereInput[] = [

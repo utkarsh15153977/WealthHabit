@@ -36,6 +36,21 @@ export const listFinancialAccountsSchema = z.object({
     .strict(),
 });
 
+/**
+ * Upper bound on how much history a single sync request may ask a provider
+ * for. Mirrors the analytics/report range cap (`ANALYTICS_MAX_RANGE_DAYS`)
+ * for the same reason: without it `?from=1970-01-01` is accepted and handed
+ * verbatim to the provider, turning one authenticated request into an
+ * unbounded fetch. One year is far more than the 90-day default window and is
+ * enough for a "backfill my first year" request.
+ *
+ * Exported so `prismaFinancialSyncService` re-checks the same bound before it
+ * calls the provider, keeping a single source of truth for both layers.
+ */
+export const SYNC_MAX_RANGE_DAYS = 366;
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+
 export const syncFinancialAccountSchema = z.object({
   params: z.object({
     id: z.string().min(1, 'Account id is required'),
@@ -49,6 +64,16 @@ export const syncFinancialAccountSchema = z.object({
     .refine(
       (query) => !query.from || !query.to || query.from.getTime() <= query.to.getTime(),
       { message: '`from` must not be after `to`' }
+    )
+    .refine(
+      (query) => {
+        if (!query.from) return true;
+        // Only `from` supplied means the window ends today, so the span that
+        // actually reaches the provider is `now - from`.
+        const upperBound = query.to ?? new Date();
+        return upperBound.getTime() - query.from.getTime() <= SYNC_MAX_RANGE_DAYS * DAY_MS;
+      },
+      { message: `Sync window must not exceed ${SYNC_MAX_RANGE_DAYS} days` }
     ),
 });
 

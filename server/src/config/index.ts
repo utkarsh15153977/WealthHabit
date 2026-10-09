@@ -3,31 +3,36 @@ import { config } from 'dotenv';
 config();
 
 /**
- * Placeholder values that are published in tracked template files, most
- * importantly `server/.env.production.example`. The documented production
- * workflow copies that file to `server/.env.production`, so an operator who
- * replaces only `DATABASE_URL` and `CLIENT_URL` leaves the placeholder in
- * place. These values are deliberately longer than the 32-character minimum,
- * so the length rule alone cannot catch them: the server would start and sign
- * production tokens with signing material that is public in the repository,
- * letting anyone forge a token for any account.
+ * Placeholder values that are published in tracked template files:
+ * `server/.env.production.example` and `server/.env.example`. Both templates are
+ * public in the repository, so an operator who copies either of them without
+ * replacing the secret leaves the placeholder in place.
+ *
+ * The development template is the easier one to reach by accident (it is the
+ * file most likely to be copied into a real environment), and its value is
+ * deliberately longer than the 32-character minimum, so the length rule alone
+ * cannot catch it: the server would start and sign production tokens with
+ * signing material that is public in the repository, letting anyone forge a
+ * token for any account.
  *
  * Compared case-insensitively after trimming, so a cosmetic edit (casing,
  * trailing whitespace) cannot bypass the check.
  */
 const JWT_SECRET_PLACEHOLDER_VALUES = [
   'replace-with-at-least-32-random-characters-from-a-secret-store',
+  'your-super-secret-jwt-access-key-min-32-chars',
 ];
 
 /**
  * Anchored, deliberately narrow near-variant guard for the same published
- * placeholder family (different separator style or a shortened tail), so the
+ * placeholder family (different separator style, a shortened tail, or the
+ * `your-super-secret-...` wording published in `server/.env.example`), so the
  * template cannot be bypassed by editing only the wording. A genuinely
  * generated secret (hex, base64 or base64url) cannot realistically collide
  * with these English word prefixes.
  */
 const JWT_SECRET_PLACEHOLDER_PATTERN =
-  /^(replace[-_\s]?with|change[-_\s]?me|change[-_\s]?this|your[-_\s]?(jwt[-_\s]?)?(access[-_\s]?)?secret)/i;
+  /^(replace[-_\s]?with|change[-_\s]?me|change[-_\s]?this|your[-_\s]?(super[-_\s]?)?(jwt[-_\s]?)?(access[-_\s]?)?secret)/i;
 
 function isJwtSecretPlaceholder(secret: string): boolean {
   const normalized = secret.trim().toLowerCase();
@@ -58,8 +63,8 @@ function validateJwtSecret(): string {
   if (isJwtSecretPlaceholder(secret)) {
     if (process.env.NODE_ENV === 'production') {
       throw new Error(
-        'JWT_ACCESS_SECRET is still the placeholder value from server/.env.production.example. ' +
-          'Generate a unique secret and inject it from a secret store.'
+        'JWT_ACCESS_SECRET is still the placeholder value from server/.env.production.example ' +
+          'or another published template file. Generate a unique secret and inject it from a secret store.'
       );
     }
     console.warn('WARNING: JWT_ACCESS_SECRET looks like a template placeholder. Use a unique secret in production.');
@@ -88,7 +93,7 @@ const MFA_ENCRYPTION_PLACEHOLDER_VALUES = [
 ];
 
 const MFA_ENCRYPTION_PLACEHOLDER_PATTERN =
-  /^(replace[-_\s]?with|change[-_\s]?me|change[-_\s]?this|your[-_\s]?mfa[-_\s]?secret)/i;
+  /^(replace[-_\s]?with|change[-_\s]?me|change[-_\s]?this|your[-_\s]?(super[-_\s]?)?(mfa[-_\s]?secret|secret))/i;
 
 function isMfaEncryptionPlaceholder(secret: string): boolean {
   const normalized = secret.trim().toLowerCase();

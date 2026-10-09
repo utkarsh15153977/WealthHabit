@@ -6,6 +6,30 @@ import { AuthErrorCodes } from '../types/auth.js';
 import { logger } from '../utils/logger.js';
 import { ensureRequestId } from './requestId.js';
 
+/**
+ * A body-parser (raw-body) rejection: it always carries `type: "entity.*"`,
+ * a 4xx `status` and, for parse failures, the underlying `SyntaxError`.
+ * Distinguished from a genuine application error so it keeps its own status
+ * code instead of becoming a 500.
+ */
+interface BodyParserError extends Error {
+  type?: string;
+  status: number;
+  statusCode?: number;
+}
+
+function isBodyParserError(err: unknown): err is BodyParserError {
+  if (!err || typeof err !== 'object') return false;
+  const candidate = err as BodyParserError;
+  return (
+    typeof candidate.type === 'string' &&
+    candidate.type.startsWith('entity.') &&
+    typeof candidate.status === 'number' &&
+    candidate.status >= 400 &&
+    candidate.status < 500
+  );
+}
+
 export const errorHandler = (
   err: Error,
   req: Request,
@@ -39,6 +63,23 @@ export const errorHandler = (
       error: {
         code: AuthErrorCodes.VALIDATION_ERROR,
         message: 'Validation failed',
+      },
+    });
+  }
+
+  // body-parser rejections (oversized body, malformed JSON) carry their own
+  // 4xx status. Without this branch they fall through to the generic handler
+  // below, turning a client mistake into a logged "Unexpected error" 500 and
+  // hiding the real reason (`entity.too.large`) from the caller.
+  if (isBodyParserError(err)) {
+    const status = err.status;
+    const message = status === 413 ? 'Request body too large' : 'Invalid request body';
+    return res.status(status).json({
+      success: false,
+      message,
+      error: {
+        code: AuthErrorCodes.VALIDATION_ERROR,
+        message,
       },
     });
   }

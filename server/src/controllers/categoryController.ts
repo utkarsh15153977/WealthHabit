@@ -180,7 +180,7 @@ export async function deleteCategoryHandler(
     );
   }
 
-  const transactionCount = await countCategoryTransactions(category.id);
+  const transactionCount = await countCategoryTransactions(category.id, userId);
   if (transactionCount > 0) {
     throw new AppError(
       'Cannot delete category that is used by transactions',

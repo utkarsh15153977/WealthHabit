@@ -18,11 +18,13 @@ import {
 } from './categorization/categorizationEngine.js';
 import { ApiErrorCodes } from '../types/errorCodes.js';
 import { AppError } from '../utils/errors.js';
+import { SYNC_MAX_RANGE_DAYS } from '../schemas/financialConnectionSchemas.js';
 import { SyncResultDto } from '../types/financialConnection.js';
 
 const DESCRIPTION_MAX_LENGTH = 500;
 const PAYMENT_METHOD_MAX_LENGTH = 100;
 const DEFAULT_SYNC_WINDOW_DAYS = 90;
+const DAY_MS = 24 * 60 * 60 * 1000;
 
 /**
  * In-process single-flight guard keyed by financial account id. Process-local
@@ -172,6 +174,21 @@ export async function syncFinancialAccount(
   userId: string,
   options?: { from?: Date; to?: Date }
 ): Promise<SyncResultDto> {
+  // Ownership is resolved BEFORE the shared lock is consulted. Otherwise a
+  // foreign account id would answer 409 while its owner's sync is running but
+  // 404 otherwise — a 404-vs-409 existence/activity oracle on another user's
+  // account id — and the caller's promise would transiently occupy the
+  // victim's lock slot (syncLocks.set below) and fail the victim's own sync.
+  const account = await findUserAccount(accountId, userId);
+  if (!account) {
+    throw new AppError(
+      'Financial account not found',
+      404,
+      undefined,
+      ApiErrorCodes.FINANCIAL_ACCOUNT_NOT_FOUND
+    );
+  }
+
   if (syncLocks.has(accountId)) {
     throw new AppError(
       'A sync for this account is already in progress',
@@ -271,6 +288,18 @@ async function doSync(
   const from =
     options?.from ?? new Date(today.getTime() - DEFAULT_SYNC_WINDOW_DAYS * 24 * 60 * 60 * 1000);
   const to = options?.to ?? today;
+
+  // Second layer of the sync-window bound: the request schema rejects an
+  // over-long window for HTTP callers, this refuses it for any internal
+  // caller, so a provider can never be asked for an unbounded range.
+  if (to.getTime() - from.getTime() > SYNC_MAX_RANGE_DAYS * DAY_MS) {
+    throw new AppError(
+      `Sync window must not exceed ${SYNC_MAX_RANGE_DAYS} days`,
+      400,
+      undefined,
+      ApiErrorCodes.VALIDATION_ERROR
+    );
+  }
 
   let externalTxns: ExternalTransaction[];
   try {

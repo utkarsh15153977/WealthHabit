@@ -22,6 +22,7 @@ import {
   clearFinancialDataProviderFactories,
   setFinancialDataProviderFactory,
 } from '../src/providers/financialData/registry.js';
+import { isSyncInProgress } from '../src/services/prismaFinancialSyncService.js';
 import type {
   ExternalFinancialAccount,
   ExternalTransaction,
@@ -63,6 +64,38 @@ class FailingProvider implements FinancialDataProvider {
 
   public async disconnect(_connectionId: string): Promise<void> {
     return;
+  }
+}
+
+class GatedProvider implements FinancialDataProvider {
+  public readonly provider = FinancialConnectionProvider.MOCK;
+
+  private release!: () => void;
+  private readonly gate: Promise<void> = new Promise<void>((resolve) => {
+    this.release = resolve;
+  });
+
+  public async connect(_input: ProviderConnectInput): Promise<ProviderConnectResult> {
+    return { externalConnectionRef: 'gated-connection-ref' };
+  }
+
+  public async getAccounts(_connectionId: string): Promise<ExternalFinancialAccount[]> {
+    return [];
+  }
+
+  public async getTransactions(
+    _input: ProviderTransactionQuery
+  ): Promise<ExternalTransaction[]> {
+    await this.gate;
+    return [];
+  }
+
+  public async disconnect(_connectionId: string): Promise<void> {
+    return;
+  }
+
+  public unblock(): void {
+    this.release();
   }
 }
 
@@ -728,6 +761,60 @@ describe('Sync and import hardening', () => {
       expect(resync.body.data.transactionsFetched).toBe(19);
       expect(resync.body.data.transactionsImported).toBe(0);
       expect(await importedCount(userA.id)).toBe(18);
+    });
+  });
+
+  describe('sync concurrency and ownership', () => {
+    it('answers 404 to a foreign user and 409 to the owner while a sync is in flight', async () => {
+      const created = await createConnection(tokenA);
+      expect(created.status).toBe(201);
+      const accountId = created.body.data.accounts[0].id;
+
+      const gated = new GatedProvider();
+      setFinancialDataProviderFactory(FinancialConnectionProvider.MOCK, () => gated);
+
+      const inflight = syncAccount(accountId, tokenA);
+      // Supertest only starts the request once it is then-ed. Capturing the
+      // outcome also lets the assertion below distinguish "the lock was never
+      // taken" from "the sync already finished".
+      let settledStatus: number | undefined;
+      let settledBody: unknown;
+      void inflight.then((res) => {
+        settledStatus = res.status;
+        settledBody = res.body;
+      });
+
+      const deadline = Date.now() + 5000;
+      while (!isSyncInProgress(accountId) && Date.now() < deadline) {
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+      expect({
+        locked: isSyncInProgress(accountId),
+        settledStatus,
+        settledBody,
+      }).toEqual({ locked: true, settledStatus: undefined, settledBody: undefined });
+
+      try {
+        // Ownership is resolved before the lock is consulted, so another user
+        // learns nothing about this account's existence or activity: the
+        // answer is 404 even while the owner's sync holds the lock.
+        const foreign = await syncAccount(accountId, tokenB);
+        expect(foreign.status).toBe(404);
+        expect(foreign.body.error.code).toBe('FINANCIAL_ACCOUNT_NOT_FOUND');
+        // ...and the foreign attempt must not squat on the victim's lock slot.
+        expect(isSyncInProgress(accountId)).toBe(true);
+
+        // The owner gets the truthful answer instead.
+        const owner = await syncAccount(accountId, tokenA);
+        expect(owner.status).toBe(409);
+        expect(owner.body.error.code).toBe('SYNC_ALREADY_IN_PROGRESS');
+      } finally {
+        gated.unblock();
+      }
+
+      const finished = await inflight;
+      expect(finished.status).toBe(200);
+      expect(isSyncInProgress(accountId)).toBe(false);
     });
   });
 });
