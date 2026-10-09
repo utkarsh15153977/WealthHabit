@@ -273,4 +273,35 @@ describe('structured log formatting', () => {
     expect(readable).not.toContain('hunter2');
     expect(readable).not.toContain('abc123');
   });
+
+  it('drops a value whose context key names a secret, in both formats', () => {
+    const context = { refreshToken: 'rt_raw_value', userId: 'user-1' };
+
+    const json = formatLogEntry('error', 'rotating session', context, { json: true });
+    const parsed = JSON.parse(json);
+    expect(parsed.refreshToken).toBe('[redacted]');
+    expect(parsed.userId).toBe('user-1');
+    expect(json).not.toContain('rt_raw_value');
+
+    const readable = formatLogEntry('error', 'rotating session', context, { json: false });
+    expect(readable).toContain('refreshToken: [redacted]');
+    expect(readable).toContain('userId: user-1');
+    expect(readable).not.toContain('rt_raw_value');
+  });
+
+  it('redacts secrets nested inside an object context value', () => {
+    const json = formatLogEntry(
+      'error',
+      'provider config captured',
+      { config: { password: 'hunter2', region: 'ap-south-1' } } as never,
+      { json: true }
+    );
+
+    // The record itself must stay parseable; only the nested blob is rewritten.
+    const parsed = JSON.parse(json);
+    expect(parsed.message).toBe('provider config captured');
+    expect(parsed.config).not.toContain('hunter2');
+    expect(parsed.config).toContain('password=[redacted]');
+    expect(parsed.config).toContain('ap-south-1');
+  });
 });

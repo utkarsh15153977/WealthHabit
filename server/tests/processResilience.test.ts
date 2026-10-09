@@ -122,6 +122,19 @@ describe('sanitizeErrorMessage', () => {
     expect(sanitized).toContain('apiKey=[redacted]');
     expect(sanitized).toContain('refresh_token=[redacted]');
   });
+
+  it('strips quoted and JSON-shaped secret assignments', () => {
+    const sanitized = sanitizeErrorMessage(
+      'provider config {"password": "hunter2", "apiKey": "abc123"} header "Bearer zzz999"'
+    );
+
+    expect(sanitized).not.toContain('hunter2');
+    expect(sanitized).not.toContain('abc123');
+    expect(sanitized).not.toContain('zzz999');
+    expect(sanitized).toContain('password=[redacted]');
+    expect(sanitized).toContain('apiKey=[redacted]');
+    expect(sanitized).toContain('Bearer [redacted]');
+  });
 });
 
 describe('checkDatabaseConnection', () => {

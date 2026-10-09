@@ -12,9 +12,24 @@ export const passwordPolicy = z
   .min(8, 'Password must be at least 8 characters')
   .max(128);
 
+/**
+ * Shared address field for every auth endpoint. The 254-character cap is the
+ * RFC 5321 maximum total length of an email address; without it a caller can
+ * push an arbitrarily long string into the login path, where it is normalized
+ * and used as a rate-limit key before Argon2 is even reached. Order matters:
+ * the length check runs last so the existing format/normalization behaviour of
+ * every endpoint stays byte-identical.
+ */
+const emailField = z
+  .string()
+  .email('Invalid email address')
+  .toLowerCase()
+  .trim()
+  .max(254, 'Email must be at most 254 characters');
+
 export const registerSchema = z.object({
   body: z.object({
-    email: z.string().email('Invalid email address').toLowerCase().trim(),
+    email: emailField,
     password: passwordPolicy,
     firstName: z.string().min(1, 'First name is required').max(50).trim(),
     lastName: z.string().min(1, 'Last name is required').max(50).trim(),
@@ -23,8 +38,16 @@ export const registerSchema = z.object({
 
 export const loginSchema = z.object({
   body: z.object({
-    email: z.string().email('Invalid email address').toLowerCase().trim(),
-    password: z.string().min(1, 'Password is required'),
+    email: emailField,
+    // Presence plus the same 128-character ceiling as `passwordPolicy`: the
+    // minimum is deliberately not enforced here (a login attempt must fail on
+    // credentials, not reveal the length rule), but nothing longer than the
+    // registration ceiling can exist, so accepting more only feeds oversized
+    // input to the Argon2 verification.
+    password: z
+      .string()
+      .min(1, 'Password is required')
+      .max(128, 'Password must be at most 128 characters'),
   }),
 });
 
@@ -61,7 +84,7 @@ export const verifyEmailSchema = z.object({
 export const resendVerificationSchema = z.object({
   body: z
     .object({
-      email: z.string().email('Invalid email address').toLowerCase().trim(),
+      email: emailField,
     })
     .strict(),
 });
@@ -75,7 +98,7 @@ export const resendVerificationSchema = z.object({
 export const forgotPasswordSchema = z.object({
   body: z
     .object({
-      email: z.string().email('Invalid email address').toLowerCase().trim(),
+      email: emailField,
     })
     .strict(),
 });

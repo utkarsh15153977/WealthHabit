@@ -140,6 +140,43 @@ describe('Config Validation', () => {
       );
     });
 
+    it('should throw in production for the placeholder shipped in .env.example', async () => {
+      const template = readTemplate('../.env.example');
+      const placeholder = templateValue(template, 'JWT_ACCESS_SECRET');
+
+      // Same sanity guard as the production-template contract test: the value
+      // must clear the minimum-length rule on its own, otherwise the length
+      // check would mask a regression in the placeholder check.
+      expect(placeholder.length).toBeGreaterThanOrEqual(32);
+
+      process.env.JWT_ACCESS_SECRET = placeholder;
+      process.env.NODE_ENV = 'production';
+
+      await expect(import('../src/config/index.js')).rejects.toThrow(
+        'JWT_ACCESS_SECRET is still the placeholder value'
+      );
+    });
+
+    it('should reject near-variants of the published development secret in production', async () => {
+      process.env.NODE_ENV = 'production';
+
+      for (const variant of [
+        'your-super-secret-jwt-access-key-min-32-chars',
+        'YOUR-SUPER-SECRET-JWT-ACCESS-KEY-MIN-32-CHARS',
+        '  your-super-secret-jwt-access-key-min-32-chars  ',
+        'your_super_secret_jwt_access_key_min_32_chars',
+        'your-super-secret-jwt-access-key-min-32-chars-extra',
+        'your-jwt-access-secret-used-by-the-example-file-0123456789',
+      ]) {
+        vi.resetModules();
+        process.env.JWT_ACCESS_SECRET = variant;
+
+        await expect(import('../src/config/index.js')).rejects.toThrow(
+          'JWT_ACCESS_SECRET is still the placeholder value'
+        );
+      }
+    });
+
     it('should reject near-variants of the published placeholder in production', async () => {
       process.env.NODE_ENV = 'production';
 

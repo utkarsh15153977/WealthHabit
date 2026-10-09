@@ -7,6 +7,7 @@ import { hashPassword, authService } from '../src/services/authService.js';
 import { Role, AccountStatus, CategoryType } from '@prisma/client';
 import { errorHandler } from '../src/middleware/errorHandler.js';
 import categoryRoutes from '../src/routes/categoryRoutes.js';
+import { countCategoryTransactions } from '../src/services/prismaCategoryService.js';
 
 describe('Categories API', () => {
   let app: express.Express;
@@ -243,5 +244,26 @@ describe('Categories API', () => {
     expect(res.status).toBe(200);
     const found = await testPrisma.category.findUnique({ where: { id } });
     expect(found).toBeNull();
+  });
+
+  it('counts only the requesting user transactions for a category', async () => {
+    const created = await createCategory(tokenA, { name: 'Count Cat', type: 'EXPENSE' });
+    const id = created.body.data.category.id;
+
+    await testPrisma.transaction.create({
+      data: {
+        userId: userA.id,
+        categoryId: id,
+        type: 'EXPENSE',
+        amount: '25.00',
+        transactionDate: new Date(),
+      },
+    });
+
+    expect(await countCategoryTransactions(id, userA.id)).toBe(1);
+    // The count is keyed by both the category and the owner: another user can
+    // never inherit someone else's row count, even if handed the raw id.
+    expect(await countCategoryTransactions(id, userB.id)).toBe(0);
+    expect(await countCategoryTransactions('no-such-category', userA.id)).toBe(0);
   });
 });

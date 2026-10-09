@@ -251,6 +251,15 @@ describe('CORS', () => {
 
       expect(response.headers['vary']).toContain('Origin');
     });
+
+    it('caches the preflight result so bursts do not repeat OPTIONS calls', async () => {
+      const response = await request(app)
+        .options('/api/auth/login')
+        .set('Origin', ALLOWED_ORIGIN)
+        .set('Access-Control-Request-Method', 'POST');
+
+      expect(response.headers['access-control-max-age']).toBe('600');
+    });
   });
 
   describe('foreign origin', () => {
@@ -289,5 +298,45 @@ describe('CORS', () => {
 
       expect(response.headers['access-control-allow-origin']).toBeUndefined();
     });
+  });
+});
+
+describe('cache control', () => {
+  it('marks API responses private and non-cacheable', async () => {
+    const response = await request(app).get(HEALTH_PATH);
+
+    expect(response.status).toBe(200);
+    expect(response.headers['cache-control']).toBe('private, no-store');
+  });
+
+  it('marks error responses non-cacheable too', async () => {
+    const response = await request(app).get('/api/does-not-exist');
+
+    expect(response.status).toBe(404);
+    expect(response.headers['cache-control']).toBe('private, no-store');
+  });
+});
+
+describe('request body limits', () => {
+  it('rejects an oversized body with 413 instead of a 500', async () => {
+    const response = await request(app)
+      .post('/api/auth/register')
+      .send({ email: 'body-limit@example.com', password: 'x'.repeat(110 * 1024) });
+
+    expect(response.status).toBe(413);
+    expect(response.body.success).toBe(false);
+    expect(response.body.message).toBe('Request body too large');
+    expect(response.body.error.code).toBe('VALIDATION_ERROR');
+  });
+
+  it('rejects malformed JSON with 400 instead of a 500', async () => {
+    const response = await request(app)
+      .post('/api/auth/login')
+      .set('Content-Type', 'application/json')
+      .send('{"email": ');
+
+    expect(response.status).toBe(400);
+    expect(response.body.success).toBe(false);
+    expect(response.body.message).toBe('Invalid request body');
   });
 });

@@ -47,6 +47,12 @@ function toCategorySummary(category: {
 
 function toImportedTransactionData(tx: ImportedTransactionRecord): ImportedTransactionData {
   const account = tx.financialAccount;
+  // Same ownership guard as `toTransactionData` (Phase 6I): a cross-user
+  // account link - unreachable through the API, but never trusted here -
+  // yields null instead of leaking another user's account, and its id is
+  // scrubbed with it so the two fields can never disagree.
+  const ownedAccount = account !== null && account.userId === tx.userId ? account : null;
+
   return {
     id: tx.id,
     amount: Number(tx.amount),
@@ -57,15 +63,15 @@ function toImportedTransactionData(tx: ImportedTransactionRecord): ImportedTrans
     paymentMethod: tx.paymentMethod,
     paymentChannel: tx.paymentChannel,
     category: toCategorySummary(tx.category),
-    financialAccountId: tx.financialAccountId,
-    financialAccount: account
+    financialAccountId: ownedAccount ? tx.financialAccountId : null,
+    financialAccount: ownedAccount
       ? {
-          id: account.id,
-          name: account.name,
-          mask: account.mask,
-          type: account.type,
-          currency: account.currency,
-          institutionName: account.institutionName,
+          id: ownedAccount.id,
+          name: ownedAccount.name,
+          mask: ownedAccount.mask,
+          type: ownedAccount.type,
+          currency: ownedAccount.currency,
+          institutionName: ownedAccount.institutionName,
         }
       : null,
     source: tx.source,

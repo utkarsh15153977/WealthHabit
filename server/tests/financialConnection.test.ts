@@ -362,17 +362,32 @@ describe('Financial Connections API', () => {
     const createRes = await createMockConnection(tokenA);
     const accountId = createRes.body.data.accounts[0].id;
 
-    const first = syncFinancialAccount(accountId, userA.id);
-    const second = syncFinancialAccount(accountId, userA.id);
+    // Ownership is resolved before the lock is consulted (a foreign account
+    // id must answer 404, never 409), so the lock is only taken after an
+    // await and which of two simultaneous callers reaches it first is not
+    // part of the contract. What must hold either way: exactly one sync runs,
+    // the other is refused with 409, and the winner imports once.
+    const outcomes = await Promise.allSettled([
+      syncFinancialAccount(accountId, userA.id),
+      syncFinancialAccount(accountId, userA.id),
+    ]);
 
-    await expect(second).rejects.toMatchObject({
-      code: 'SYNC_ALREADY_IN_PROGRESS',
-      statusCode: 409,
+    const winner = outcomes.find((outcome) => outcome.status === 'fulfilled');
+    const loser = outcomes.find((outcome) => outcome.status === 'rejected');
+    expect(winner).toBeDefined();
+    expect(loser).toBeDefined();
+    expect(loser).toMatchObject({
+      reason: {
+        code: 'SYNC_ALREADY_IN_PROGRESS',
+        statusCode: 409,
+      },
     });
 
-    const result = await first;
-    expect(result.transactionsFetched).toBe(19);
-    expect(result.transactionsImported).toBe(19);
+    if (winner?.status !== 'fulfilled') {
+      throw new Error('expected one concurrent sync to succeed');
+    }
+    expect(winner.value.transactionsFetched).toBe(19);
+    expect(winner.value.transactionsImported).toBe(19);
 
     const count = await testPrisma.transaction.count({
       where: { userId: userA.id, source: TransactionSource.IMPORTED },
@@ -417,6 +432,46 @@ describe('Financial Connections API', () => {
       .set('Authorization', `Bearer ${tokenA}`);
     expect(inverted.status).toBe(400);
     expect(inverted.body.error.code).toBe('VALIDATION_ERROR');
+  });
+
+  it('rejects a sync window wider than the maximum span', async () => {
+    const createRes = await createMockConnection(tokenA);
+    expect(createRes.status).toBe(201);
+    const accountId = createRes.body.data.accounts[0].id;
+
+    const DAY_MS = 24 * 60 * 60 * 1000;
+    const now = Date.now();
+    const day = (offsetDays: number) =>
+      new Date(now + offsetDays * DAY_MS).toISOString().split('T')[0];
+    const validationDetails = (body: {
+      errors?: Record<string, string[] | undefined>;
+    }) => Object.values(body.errors ?? {}).flat().filter(Boolean).join(' ');
+
+    // 400 days wide: over the 366-day cap, rejected before any provider call.
+    const tooWide = await request(app)
+      .post(`/api/financial-accounts/${accountId}/sync?from=${day(-400)}&to=${day(0)}`)
+      .set('Authorization', `Bearer ${tokenA}`);
+    expect(tooWide.status).toBe(400);
+    expect(tooWide.body.error.code).toBe('VALIDATION_ERROR');
+    expect(validationDetails(tooWide.body)).toContain('366');
+
+    // Only `from`: the window ends today, so the same cap applies.
+    const fromOnly = await request(app)
+      .post(`/api/financial-accounts/${accountId}/sync?from=${day(-400)}`)
+      .set('Authorization', `Bearer ${tokenA}`);
+    expect(fromOnly.status).toBe(400);
+    expect(validationDetails(fromOnly.body)).toContain('366');
+
+    // A window just inside the cap is still accepted.
+    const withinCap = await request(app)
+      .post(`/api/financial-accounts/${accountId}/sync?from=${day(-300)}&to=${day(0)}`)
+      .set('Authorization', `Bearer ${tokenA}`);
+    expect(withinCap.status).toBe(200);
+
+    // The service enforces the same bound for callers that skip the schema.
+    await expect(
+      syncFinancialAccount(accountId, userA.id, { from: new Date(now - 400 * DAY_MS) })
+    ).rejects.toThrow('Sync window must not exceed 366 days');
   });
 
   it('rejects unsupported provider and invalid payloads', async () => {

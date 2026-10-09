@@ -312,6 +312,36 @@ export const mfaChallengeRateLimit = rateLimit({
     ),
 });
 
+/**
+ * Budget for `GET /api/health/ready`.
+ *
+ * Unlike `/api/health` (liveness: no dependencies, deliberately exempt so a
+ * load balancer can poll it for free), readiness executes a real database
+ * round trip. It is unauthenticated by design, and because `app.ts` mounts the
+ * health router ahead of `apiRateLimit` it would otherwise be the one
+ * `/api/*` path with no bound at all — an anonymous caller could drive
+ * unlimited `SELECT 1` load.
+ *
+ * The budget is deliberately generous (one probe every ~7.5s sustained per IP
+ * in production, far more in development) so a legitimate monitor, orchestrator
+ * or uptime check never sees a 429, while a single-client flood stays bounded.
+ */
+export const HEALTH_READINESS_RATE_LIMIT_MAX = env.isDevelopment ? 1000 : 120;
+
+export const healthReadinessRateLimit = rateLimit({
+  windowMs,
+  max: HEALTH_READINESS_RATE_LIMIT_MAX,
+  message: {
+    success: false,
+    error: {
+      code: 'RATE_LIMIT_EXCEEDED',
+      message: 'Too many requests, please try again later',
+    },
+  },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
 export const apiRateLimit = rateLimit({
   windowMs,
   max: env.isDevelopment ? 500 : 100,

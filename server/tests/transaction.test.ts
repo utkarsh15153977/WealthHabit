@@ -14,6 +14,10 @@ import {
   TransactionSource,
 } from '@prisma/client';
 import { errorHandler } from '../src/middleware/errorHandler.js';
+import {
+  listUserTransactions,
+  MAX_LIST_PAGE_SIZE,
+} from '../src/services/prismaTransactionService.js';
 import categoryRoutes from '../src/routes/categoryRoutes.js';
 import transactionRoutes from '../src/routes/transactionRoutes.js';
 import budgetRoutes from '../src/routes/budgetRoutes.js';
@@ -318,13 +322,34 @@ describe('Transactions API', () => {
 
     expect(res.status).toBe(200);
     expect(res.body.data.transactions).toHaveLength(2);
-    expect(res.body.data.pagination).toEqual({
-      page: 1,
-      limit: 2,
-      total: 3,
-      totalPages: 2,
+      expect(res.body.data.pagination).toEqual({
+        page: 1,
+        limit: 2,
+        total: 3,
+        totalPages: 2,
+      });
     });
-  });
+
+    it('clamps a service-level limit that never passed request validation', async () => {
+      for (let i = 0; i < 3; i++) {
+        await createTx(tokenA, {
+          categoryId: expenseCatA,
+          type: 'EXPENSE',
+          amount: String(i + 1),
+          transactionDate: `2026-02-1${i}T12:00:00.000Z`,
+        });
+      }
+
+      // The route schemas cap `limit` at 100; this bypasses them entirely, as
+      // a future internal caller would, and must still not page the world.
+      const result = await listUserTransactions(userA.id, { page: 1, limit: 1000 });
+
+      expect(result.limit).toBe(MAX_LIST_PAGE_SIZE);
+      expect(result.limit).toBe(100);
+      expect(result.page).toBe(1);
+      expect(result.total).toBe(3);
+      expect(result.transactions).toHaveLength(3);
+    });
 
   it('gets own transaction', async () => {
     const created = await createTx(tokenA, {
