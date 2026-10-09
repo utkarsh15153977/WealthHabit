@@ -19,11 +19,15 @@ import {
   Percent,
   ReceiptText,
   Flame,
+  Building2,
+  Landmark,
 } from 'lucide-react';
 import { useAuth } from '../context/useAuth';
 import { Loading } from '../components/Loading';
+import { SyncStatus } from '../components/financial/SyncStatus';
 import { getApiErrorMessage } from '../services/error';
 import { getDashboardSummary } from '../services/dashboardApi';
+import { financialApi } from '../services/financialApi';
 import { budgetApi } from '../services/budgetApi';
 import { recurringTransactionApi } from '../services/recurringTransactionApi';
 import { billApi } from '../services/billApi';
@@ -33,7 +37,8 @@ import { habitApi } from '../services/habitApi';
 import { challengeApi } from '../services/challengeApi';
 import { goalApi } from '../services/goalApi';
 import { assetLiabilityApi } from '../services/assetLiabilityApi';
-import { formatDate, formatMonth } from '../utils/date';
+import { formatDate, formatMonth, formatRelativeTime } from '../utils/date';
+import { paymentChannelLabel } from '../utils/paymentChannel';
 import type { DashboardSummaryData } from '../types/dashboard';
 import type { HabitWithProgress } from '../types/habit';
 import type { Challenge } from '../types/challenge';
@@ -43,10 +48,34 @@ import type { BudgetWithProgress } from '../types/budget';
 import type { RecurringTransaction } from '../types/recurringTransaction';
 import type { Bill } from '../types/bill';
 import type { Subscription } from '../types/subscription';
+import type { FinancialConnection, ImportedTransaction } from '../types/financial';
 
 function currentUtcMonth(): string {
   const now = new Date();
   return `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, '0')}`;
+}
+
+const ACCOUNT_TYPE_LABELS: Record<string, string> = {
+  SAVINGS: 'Savings',
+  CURRENT: 'Current',
+  DEBIT_CARD: 'Debit Card',
+  CREDIT_CARD: 'Credit Card',
+  UPI_LINKED: 'UPI Linked',
+};
+
+const RECENT_FINANCIAL_LIMIT = 5;
+
+function accountTypeLabel(type: string): string {
+  return ACCOUNT_TYPE_LABELS[type] ?? type;
+}
+
+function latestConnectionSyncAt(connection: FinancialConnection): string | null {
+  const timestamps = [
+    connection.lastSyncedAt,
+    ...connection.accounts.map((account) => account.lastSyncedAt),
+  ].filter((value): value is string => Boolean(value));
+  if (timestamps.length === 0) return null;
+  return timestamps.slice().sort().at(-1) ?? null;
 }
 
 function createCurrencyFormatter(currency: string | null): (amount: number) => string {
@@ -133,6 +162,12 @@ export function Dashboard() {
   const [assetLiabilitySummary, setAssetLiabilitySummary] = useState<AssetsLiabilitiesSummary | null>(null);
   const [assetLiabilitySummaryLoading, setAssetLiabilitySummaryLoading] = useState(true);
   const [assetLiabilitySummaryError, setAssetLiabilitySummaryError] = useState<string | null>(null);
+  const [financialConnections, setFinancialConnections] = useState<FinancialConnection[]>([]);
+  const [connectionsLoading, setConnectionsLoading] = useState(true);
+  const [connectionsError, setConnectionsError] = useState<string | null>(null);
+  const [recentImported, setRecentImported] = useState<ImportedTransaction[]>([]);
+  const [recentImportedLoading, setRecentImportedLoading] = useState(true);
+  const [recentImportedError, setRecentImportedError] = useState<string | null>(null);
 
   const requestIdRef = useRef(0);
   const budgetsRequestRef = useRef(0);
@@ -144,6 +179,8 @@ export function Dashboard() {
   const challengesRequestRef = useRef(0);
   const goalsRequestRef = useRef(0);
   const assetLiabilitySummaryRequestRef = useRef(0);
+  const connectionsRequestRef = useRef(0);
+  const recentImportedRequestRef = useRef(0);
   const hasLoadedRef = useRef(false);
 
   const fetchSummary = useCallback(async (requestedMonth: string, initial: boolean) => {
@@ -476,6 +513,78 @@ export function Dashboard() {
     void fetchAssetLiabilitySummary();
   }, [fetchAssetLiabilitySummary]);
 
+  const fetchConnections = useCallback(async () => {
+    const requestId = connectionsRequestRef.current + 1;
+    connectionsRequestRef.current = requestId;
+
+    setConnectionsLoading(true);
+    setConnectionsError(null);
+
+    try {
+      const result = await financialApi.listFinancialConnections();
+
+      if (requestId !== connectionsRequestRef.current) {
+        return;
+      }
+
+      setFinancialConnections(result);
+    } catch (error) {
+      if (requestId !== connectionsRequestRef.current) {
+        return;
+      }
+      setFinancialConnections([]);
+      setConnectionsError(getApiErrorMessage(error));
+    } finally {
+      if (requestId === connectionsRequestRef.current) {
+        setConnectionsLoading(false);
+      }
+    }
+  }, []);
+
+  useEffect(() => {
+    void fetchConnections();
+  }, [fetchConnections]);
+
+  const fetchRecentImported = useCallback(async () => {
+    const requestId = recentImportedRequestRef.current + 1;
+    recentImportedRequestRef.current = requestId;
+
+    setRecentImportedLoading(true);
+    setRecentImportedError(null);
+
+    try {
+      const result = await financialApi.listImportedTransactions({
+        page: 1,
+        limit: RECENT_FINANCIAL_LIMIT,
+      });
+
+      if (requestId !== recentImportedRequestRef.current) {
+        return;
+      }
+
+      setRecentImported(result.transactions);
+    } catch (error) {
+      if (requestId !== recentImportedRequestRef.current) {
+        return;
+      }
+      setRecentImported([]);
+      setRecentImportedError(getApiErrorMessage(error));
+    } finally {
+      if (requestId === recentImportedRequestRef.current) {
+        setRecentImportedLoading(false);
+      }
+    }
+  }, []);
+
+  useEffect(() => {
+    void fetchRecentImported();
+  }, [fetchRecentImported]);
+
+  const connectedAccountCount = useMemo(
+    () => financialConnections.reduce((total, connection) => total + connection.accounts.length, 0),
+    [financialConnections]
+  );
+
   const habitsCompleted = useMemo(
     () =>
       habitSummary.filter((habit) => habit.progress?.currentPeriod.completed === true)
@@ -769,6 +878,221 @@ export function Dashboard() {
             </div>
           </>
         )}
+
+        <div className="grid grid-cols-1 xl:grid-cols-2 gap-6 mt-6">
+          <div className="card" data-testid="dashboard-connected-accounts">
+            <div className="card-header flex items-center justify-between">
+              <h2 className="heading-4">Connected Accounts</h2>
+              <Link
+                to="/financial-connections"
+                className="text-sm text-primary hover:underline"
+                data-testid="dashboard-manage-connections-link"
+              >
+                Manage connections
+              </Link>
+            </div>
+            <div className="card-body">
+              {connectionsLoading && (
+                <p className="text-sm text-text-muted text-center py-8" role="status">
+                  Loading connected accounts...
+                </p>
+              )}
+
+              {!connectionsLoading && connectionsError && (
+                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 py-2">
+                  <span className="text-sm text-error" role="alert">
+                    {connectionsError}
+                  </span>
+                  <button
+                    type="button"
+                    className="btn-secondary btn-sm self-start sm:self-auto"
+                    onClick={() => void fetchConnections()}
+                  >
+                    Retry
+                  </button>
+                </div>
+              )}
+
+              {!connectionsLoading && !connectionsError && financialConnections.length === 0 && (
+                <div className="text-center py-8" data-testid="dashboard-connected-accounts-empty">
+                  <div className="w-12 h-12 mx-auto mb-3 rounded-full bg-primary-light flex items-center justify-center">
+                    <Building2 className="w-6 h-6 text-primary" aria-hidden="true" />
+                  </div>
+                  <p className="text-sm text-text-muted">
+                    No connected accounts yet. Link a bank or card to import activity automatically.
+                  </p>
+                  <Link to="/financial-connections" className="btn-primary btn-sm mt-4 inline-flex">
+                    <Building2 className="w-4 h-4" aria-hidden="true" />
+                    Connect an account
+                  </Link>
+                </div>
+              )}
+
+              {!connectionsLoading && !connectionsError && financialConnections.length > 0 && (
+                <div data-testid="dashboard-connected-accounts-list">
+                  <p
+                    className="text-sm text-text-muted mb-3"
+                    data-testid="dashboard-connected-accounts-count"
+                  >
+                    {financialConnections.length} connection
+                    {financialConnections.length === 1 ? '' : 's'} · {connectedAccountCount} account
+                    {connectedAccountCount === 1 ? '' : 's'}
+                  </p>
+                  <ul className="space-y-4">
+                    {financialConnections.slice(0, 3).map((connection) => {
+                      const lastSync = latestConnectionSyncAt(connection);
+                      const relative = lastSync ? formatRelativeTime(lastSync) : null;
+                      return (
+                        <li
+                          key={connection.id}
+                          className="border-t border-border first:border-t-0 first:pt-0 pt-4"
+                          data-testid={`dashboard-connection-${connection.id}`}
+                        >
+                          <div className="flex items-center justify-between gap-3">
+                            <span className="text-sm font-medium text-text truncate">
+                              {connection.institutionName ?? 'Connected account'}
+                            </span>
+                            <SyncStatus status={connection.status} />
+                          </div>
+                          <p className="text-xs text-text-muted mt-0.5">
+                            {connection.accounts.length} account
+                            {connection.accounts.length === 1 ? '' : 's'}
+                            {relative ? ` · Last synced ${relative}` : ' · Not synced yet'}
+                          </p>
+                          {connection.accounts.length > 0 && (
+                            <ul className="mt-2 space-y-1">
+                              {connection.accounts.slice(0, 3).map((account) => (
+                                <li
+                                  key={account.id}
+                                  className="flex items-center justify-between gap-3 text-xs text-text-muted"
+                                >
+                                  <span className="truncate inline-flex items-center gap-1.5">
+                                    <Landmark className="w-3.5 h-3.5 flex-shrink-0" aria-hidden="true" />
+                                    {account.name} · {accountTypeLabel(account.type)}
+                                  </span>
+                                  <span className="whitespace-nowrap">
+                                    {account.mask ? `•••• ${account.mask}` : account.currency}
+                                  </span>
+                                </li>
+                              ))}
+                            </ul>
+                          )}
+                        </li>
+                      );
+                    })}
+                  </ul>
+                </div>
+              )}
+            </div>
+          </div>
+
+          <div className="card" data-testid="dashboard-recent-financial-activity">
+            <div className="card-header flex items-center justify-between">
+              <h2 className="heading-4">Recent Imported Activity</h2>
+              <Link to="/transactions/imported" className="text-sm text-primary hover:underline">
+                Review imported
+              </Link>
+            </div>
+            <div className="card-body">
+              {recentImportedLoading && (
+                <p className="text-sm text-text-muted text-center py-8" role="status">
+                  Loading imported activity...
+                </p>
+              )}
+
+              {!recentImportedLoading && recentImportedError && (
+                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 py-2">
+                  <span className="text-sm text-error" role="alert">
+                    {recentImportedError}
+                  </span>
+                  <button
+                    type="button"
+                    className="btn-secondary btn-sm self-start sm:self-auto"
+                    onClick={() => void fetchRecentImported()}
+                  >
+                    Retry
+                  </button>
+                </div>
+              )}
+
+              {!recentImportedLoading && !recentImportedError && recentImported.length === 0 && (
+                <div className="text-center py-8" data-testid="dashboard-financial-activity-empty">
+                  <Landmark className="w-8 h-8 text-primary mx-auto mb-3" aria-hidden="true" />
+                  <p className="text-sm text-text-muted">
+                    No imported transactions yet.
+                  </p>
+                  <Link to="/financial-connections" className="btn-primary btn-sm mt-4 inline-flex">
+                    <Building2 className="w-4 h-4" aria-hidden="true" />
+                    Connect an account
+                  </Link>
+                </div>
+              )}
+
+              {!recentImportedLoading && !recentImportedError && recentImported.length > 0 && (
+                <div data-testid="dashboard-financial-activity">
+                  <ul className="divide-y divide-border">
+                    {recentImported.map((transaction) => {
+                      const channel = paymentChannelLabel(transaction.paymentChannel);
+                      const account = transaction.financialAccount
+                        ? `${transaction.financialAccount.name}${
+                            transaction.financialAccount.mask
+                              ? ` •••• ${transaction.financialAccount.mask}`
+                              : ''
+                          }`
+                        : null;
+                      const support = [account, channel].filter(Boolean).join(' · ');
+                      return (
+                        <li
+                          key={transaction.id}
+                          className="py-3 flex items-center justify-between gap-4"
+                          data-testid={`dashboard-financial-activity-${transaction.id}`}
+                        >
+                          <div className="min-w-0">
+                            <p className="text-sm text-text truncate">
+                              {transaction.merchant ||
+                                transaction.description ||
+                                transaction.category.name}
+                            </p>
+                            <p className="text-xs text-text-muted mt-0.5 truncate">
+                              {formatDate(transaction.transactionDate)} · {transaction.category.name}
+                            </p>
+                            {support && (
+                              <p className="text-xs text-text-muted mt-0.5 truncate">{support}</p>
+                            )}
+                          </div>
+                          <div className="flex flex-col items-end gap-1 whitespace-nowrap">
+                            <span
+                              className={
+                                transaction.type === 'INCOME'
+                                  ? 'text-sm font-medium text-success'
+                                  : 'text-sm font-medium text-error'
+                              }
+                            >
+                              {transaction.type === 'INCOME' ? '+' : '−'}
+                              {formatAmount(transaction.amount)}
+                            </span>
+                            <span className="badge badge-info">Imported</span>
+                          </div>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                  <div className="mt-3 flex flex-wrap items-center gap-4">
+                    <Link to="/transactions" className="text-sm text-primary hover:underline">
+                      View all transactions
+                    </Link>
+                    <Link
+                      to="/transactions/imported"
+                      className="text-sm text-primary hover:underline"
+                    >
+                      Review imported
+                    </Link>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
 
         <div className="card mt-6">
           <div className="card-header flex items-center justify-between">
