@@ -4,7 +4,15 @@ import express from 'express';
 import cookieParser from 'cookie-parser';
 import { testPrisma, createTestUser } from './setup.js';
 import { hashPassword, authService } from '../src/services/authService.js';
-import { Role, AccountStatus, CategoryType, TransactionType } from '@prisma/client';
+import {
+  Role,
+  AccountStatus,
+  CategoryType,
+  TransactionType,
+  FinancialAccountType,
+  FinancialConnectionProvider,
+  TransactionSource,
+} from '@prisma/client';
 import { errorHandler } from '../src/middleware/errorHandler.js';
 import categoryRoutes from '../src/routes/categoryRoutes.js';
 import transactionRoutes from '../src/routes/transactionRoutes.js';
@@ -687,6 +695,201 @@ describe('Transactions API', () => {
         percentageUsed: 20,
         transactionCount: 1,
       });
+    });
+  });
+
+  describe('imported transaction metadata', () => {
+    async function seedOwnedAccount(userId: string) {
+      const suffix = Math.random().toString(36).slice(2, 8);
+      const connection = await testPrisma.financialConnection.create({
+        data: {
+          userId,
+          provider: FinancialConnectionProvider.MOCK,
+          institutionName: 'Demo Bank',
+        },
+      });
+      const account = await testPrisma.financialAccount.create({
+        data: {
+          connectionId: connection.id,
+          userId,
+          externalAccountId: `ext-${suffix}`,
+          name: 'Everyday Savings',
+          mask: '4821',
+          type: FinancialAccountType.SAVINGS,
+          currency: 'USD',
+          institutionName: 'Demo Bank',
+        },
+      });
+      return { connection, account };
+    }
+
+    async function seedImportedTx(
+      userId: string,
+      categoryId: string,
+      accountId: string
+    ) {
+      const suffix = Math.random().toString(36).slice(2, 10);
+      return testPrisma.transaction.create({
+        data: {
+          userId,
+          categoryId,
+          type: TransactionType.EXPENSE,
+          amount: '42.50',
+          transactionDate: new Date('2026-04-02T09:30:00.000Z'),
+          description: 'LATTE',
+          paymentMethod: 'UPI',
+          source: TransactionSource.IMPORTED,
+          financialAccountId: accountId,
+          merchant: 'Blue Bottle',
+          paymentChannel: 'GOOGLEPAY',
+          externalTransactionId: `ext-tx-${suffix}`,
+          importedAt: new Date('2026-04-02T10:00:00.000Z'),
+        },
+      });
+    }
+
+    async function listAs(token: string) {
+      const res = await request(app)
+        .get('/api/transactions')
+        .set('Authorization', `Bearer ${token}`);
+      expect(res.status).toBe(200);
+      return res.body.data.transactions as any[];
+    }
+
+    it('returns source, merchant, payment channel and the linked account summary', async () => {
+      const { account } = await seedOwnedAccount(userA.id);
+      await seedImportedTx(userA.id, expenseCatA, account.id);
+
+      const tx = (await listAs(tokenA)).find((t) => t.merchant === 'Blue Bottle');
+      expect(tx).toBeDefined();
+      expect(tx.source).toBe('IMPORTED');
+      expect(tx.merchant).toBe('Blue Bottle');
+      expect(tx.paymentChannel).toBe('GOOGLEPAY');
+      expect(tx.paymentMethod).toBe('UPI');
+      expect(tx.description).toBe('LATTE');
+      expect(tx.financialAccountId).toBe(account.id);
+      expect(tx.financialAccount).toEqual({
+        id: account.id,
+        name: 'Everyday Savings',
+        mask: '4821',
+        type: 'SAVINGS',
+        currency: 'USD',
+        institutionName: 'Demo Bank',
+      });
+    });
+
+    it('exposes only safe display fields on the account summary', async () => {
+      const { account } = await seedOwnedAccount(userA.id);
+      await seedImportedTx(userA.id, expenseCatA, account.id);
+
+      const tx = (await listAs(tokenA))[0];
+      expect(Object.keys(tx.financialAccount).sort()).toEqual(
+        ['currency', 'id', 'institutionName', 'mask', 'name', 'type'].sort()
+      );
+      expect(tx.financialAccount).not.toHaveProperty('userId');
+      expect(tx.financialAccount).not.toHaveProperty('connectionId');
+      expect(tx.financialAccount).not.toHaveProperty('externalAccountId');
+      expect(tx.financialAccount).not.toHaveProperty('lastSyncError');
+      expect(tx.financialAccount).not.toHaveProperty('providerMetadata');
+      expect(tx).not.toHaveProperty('userId');
+      expect(tx).not.toHaveProperty('dedupKey');
+      expect(tx).not.toHaveProperty('externalTransactionId');
+    });
+
+    it('serialises manual transactions with null optional metadata', async () => {
+      const created = await createTx(tokenA, {
+        categoryId: expenseCatA,
+        type: 'EXPENSE',
+        amount: '10.00',
+        transactionDate: '2026-01-16T12:00:00.000Z',
+        description: 'Manual groceries',
+      });
+      expect(created.status).toBe(201);
+
+      const tx = created.body.data.transaction;
+      expect(tx.source).toBe('MANUAL');
+      expect(tx.merchant).toBeNull();
+      expect(tx.paymentChannel).toBeNull();
+      expect(tx.financialAccountId).toBeNull();
+      expect(tx.financialAccount).toBeNull();
+      expect(tx.description).toBe('Manual groceries');
+    });
+
+    it('keeps list, detail and update responses consistent for imported rows', async () => {
+      const { account } = await seedOwnedAccount(userA.id);
+      const seeded = await seedImportedTx(userA.id, expenseCatA, account.id);
+
+      const listed = (await listAs(tokenA)).find((t) => t.id === seeded.id);
+      expect(listed).toBeDefined();
+
+      const detail = await request(app)
+        .get(`/api/transactions/${seeded.id}`)
+        .set('Authorization', `Bearer ${tokenA}`);
+      expect(detail.status).toBe(200);
+      const detailTx = detail.body.data.transaction;
+
+      const metadata = (tx: any) => ({
+        source: tx.source,
+        merchant: tx.merchant,
+        paymentChannel: tx.paymentChannel,
+        financialAccountId: tx.financialAccountId,
+        financialAccount: tx.financialAccount,
+      });
+      expect(metadata(detailTx)).toEqual(metadata(listed));
+
+      const updated = await request(app)
+        .patch(`/api/transactions/${seeded.id}`)
+        .set('Authorization', `Bearer ${tokenA}`)
+        .send({ amount: '50.00', description: 'Updated by user' });
+      expect(updated.status).toBe(200);
+
+      const updatedTx = updated.body.data.transaction;
+      expect(updatedTx.amount).toBe(50);
+      expect(updatedTx.description).toBe('Updated by user');
+      expect(metadata(updatedTx)).toEqual(metadata(listed));
+
+      const after = (await listAs(tokenA)).find((t) => t.id === seeded.id);
+      expect(metadata(after)).toEqual(metadata(listed));
+    });
+
+    it('never returns another user account through transaction metadata', async () => {
+      const { account: foreignAccount } = await seedOwnedAccount(userB.id);
+      const seeded = await seedImportedTx(userA.id, expenseCatA, foreignAccount.id);
+
+      const res = await request(app)
+        .get(`/api/transactions/${seeded.id}`)
+        .set('Authorization', `Bearer ${tokenA}`);
+      expect(res.status).toBe(200);
+
+      const tx = res.body.data.transaction;
+      expect(tx.financialAccount).toBeNull();
+      expect(tx.financialAccountId).toBeNull();
+      expect(JSON.stringify(res.body)).not.toContain('Everyday Savings');
+      expect(JSON.stringify(res.body)).not.toContain('4821');
+      expect(JSON.stringify(res.body)).not.toContain(foreignAccount.id);
+
+      const asOwner = await request(app)
+        .get(`/api/transactions/${seeded.id}`)
+        .set('Authorization', `Bearer ${tokenB}`);
+      expect(asOwner.status).toBe(404);
+    });
+
+    it('lists only the requesting user imported rows with their own account', async () => {
+      const { account: accountA } = await seedOwnedAccount(userA.id);
+      const { account: accountB } = await seedOwnedAccount(userB.id);
+      const txA = await seedImportedTx(userA.id, expenseCatA, accountA.id);
+      await seedImportedTx(userB.id, privateCatB, accountB.id);
+
+      const rowsA = await listAs(tokenA);
+      expect(rowsA).toHaveLength(1);
+      expect(rowsA[0].id).toBe(txA.id);
+      expect(rowsA[0].financialAccount.id).toBe(accountA.id);
+      expect(rowsA[0].financialAccount.name).toBe('Everyday Savings');
+
+      const rowsB = await listAs(tokenB);
+      expect(rowsB).toHaveLength(1);
+      expect(rowsB[0].id).not.toBe(txA.id);
+      expect(rowsB[0].financialAccount.id).toBe(accountB.id);
     });
   });
 });

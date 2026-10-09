@@ -17,57 +17,8 @@ import {
 } from '../services/prismaTransactionService.js';
 import { AppError } from '../utils/errors.js';
 import { ApiErrorCodes } from '../types/errorCodes.js';
-import {
-  TransactionCategorySummary,
-  TransactionData,
-  TransactionListData,
-} from '../types/transaction.js';
-
-function toCategorySummary(category: {
-  id: string;
-  name: string;
-  type: TransactionCategorySummary['type'];
-  icon: string | null;
-  color: string | null;
-  isDefault: boolean;
-}): TransactionCategorySummary {
-  return {
-    id: category.id,
-    name: category.name,
-    type: category.type,
-    icon: category.icon,
-    color: category.color,
-    isDefault: category.isDefault,
-  };
-}
-
-function toTransactionData(tx: {
-  id: string;
-  categoryId: string;
-  type: TransactionData['type'];
-  amount: unknown;
-  description: string | null;
-  transactionDate: Date;
-  paymentMethod: string | null;
-  notes: string | null;
-  createdAt: Date;
-  updatedAt: Date;
-  category: Parameters<typeof toCategorySummary>[0];
-}): TransactionData {
-  return {
-    id: tx.id,
-    categoryId: tx.categoryId,
-    type: tx.type,
-    amount: Number(tx.amount),
-    description: tx.description,
-    transactionDate: tx.transactionDate,
-    paymentMethod: tx.paymentMethod,
-    notes: tx.notes,
-    createdAt: tx.createdAt,
-    updatedAt: tx.updatedAt,
-    category: toCategorySummary(tx.category),
-  };
-}
+import { toTransactionData } from '../services/transactionDto.js';
+import { TransactionListData } from '../types/transaction.js';
 
 function typeMatchesCategory(type: string, categoryType: CategoryType): boolean {
   return (type as unknown as CategoryType) === categoryType;

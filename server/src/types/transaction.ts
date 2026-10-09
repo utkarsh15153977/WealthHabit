@@ -21,6 +21,11 @@ export interface TransactionData {
   createdAt: Date;
   updatedAt: Date;
   category: TransactionCategorySummary;
+  source: TransactionSource;
+  merchant: string | null;
+  paymentChannel: string | null;
+  financialAccountId: string | null;
+  financialAccount: ImportedTransactionAccountSummary | null;
 }
 
 export interface PaginationMeta {

@@ -35,10 +35,12 @@ export interface Transaction {
   updatedAt: string;
   category: TransactionCategory;
   /**
-   * Financial-import metadata. These fields are optional because the current
-   * `GET /transactions` DTO does not emit them yet (see Phase 6H report). The UI
-   * renders them only when present, so it stays correct once the API exposes
-   * them without requiring a backend change today.
+   * Financial-import metadata. `GET /api/transactions` (and the dashboard
+   * summary) emits these for every row since Phase 6I: `source` is `MANUAL` or
+   * `IMPORTED`, while `merchant`, `paymentChannel`, `financialAccountId` and
+   * `financialAccount` are `null` when they do not apply. They stay optional so
+   * the UI also tolerates responses that omit them, and they are rendered only
+   * when present.
    */
   source?: TransactionSource;
   merchant?: string | null;
