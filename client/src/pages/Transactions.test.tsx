@@ -66,6 +66,12 @@ function makeTransaction(overrides: Partial<Transaction> = {}): Transaction {
       color: null,
       isDefault: true,
     },
+    // Exact shape of the real `GET /api/transactions` DTO since Phase 6I.
+    source: 'MANUAL',
+    merchant: null,
+    paymentChannel: null,
+    financialAccountId: null,
+    financialAccount: null,
     ...overrides,
   };
 }
@@ -135,8 +141,28 @@ describe('Transactions page', () => {
     );
   });
 
-  it('renders a manual transaction without import metadata', async () => {
+  it('renders the Manual source label for a manual transaction with null metadata', async () => {
     mockedGetTransactions.mockResolvedValue(listResponse([makeTransaction()]));
+
+    renderPage();
+
+    expect(await screen.findAllByText('Groceries')).not.toHaveLength(0);
+    expect(screen.getByTestId('transaction-source-tx-1')).toHaveTextContent('Manual');
+    expect(screen.queryByText(/Everyday Checking/)).toBeNull();
+  });
+
+  it('still renders rows when the optional metadata fields are absent', async () => {
+    mockedGetTransactions.mockResolvedValue(
+      listResponse([
+        makeTransaction({
+          source: undefined,
+          merchant: undefined,
+          paymentChannel: undefined,
+          financialAccountId: undefined,
+          financialAccount: undefined,
+        }),
+      ])
+    );
 
     renderPage();
 

@@ -1,14 +1,14 @@
-import { Prisma, TransactionType, CategoryType } from '@prisma/client';
+import { Prisma, TransactionType } from '@prisma/client';
 import type { DashboardSummaryQuery } from '../schemas/dashboardSchemas.js';
 import type {
   DashboardSpendingCategory,
   DashboardSummaryData,
   DashboardTrendPoint,
 } from '../types/dashboard.js';
-import type { TransactionData, TransactionCategorySummary } from '../types/transaction.js';
 import { prisma } from '../config/prisma.js';
 import { currentUtcMonth, monthBounds, parseMonthKey, toUtcMonthKey } from '../utils/date.js';
 import { ZERO, roundMoney, roundRate } from '../utils/money.js';
+import { transactionInclude, toTransactionData } from './transactionDto.js';
 
 function listTrendMonths(month: string, count: number): string[] {
   const { year, monthIndex } = parseMonthKey(month);
@@ -25,52 +25,6 @@ function calculateSavingsRate(income: Prisma.Decimal, expenses: Prisma.Decimal):
     return 0;
   }
   return roundRate(income.minus(expenses).dividedBy(income).mul(100));
-}
-
-function toCategorySummary(category: {
-  id: string;
-  name: string;
-  type: CategoryType;
-  icon: string | null;
-  color: string | null;
-  isDefault: boolean;
-}): TransactionCategorySummary {
-  return {
-    id: category.id,
-    name: category.name,
-    type: category.type,
-    icon: category.icon,
-    color: category.color,
-    isDefault: category.isDefault,
-  };
-}
-
-function toTransactionData(tx: {
-  id: string;
-  categoryId: string;
-  type: TransactionData['type'];
-  amount: unknown;
-  description: string | null;
-  transactionDate: Date;
-  paymentMethod: string | null;
-  notes: string | null;
-  createdAt: Date;
-  updatedAt: Date;
-  category: TransactionCategorySummary;
-}): TransactionData {
-  return {
-    id: tx.id,
-    categoryId: tx.categoryId,
-    type: tx.type,
-    amount: Number(tx.amount),
-    description: tx.description,
-    transactionDate: tx.transactionDate,
-    paymentMethod: tx.paymentMethod,
-    notes: tx.notes,
-    createdAt: tx.createdAt,
-    updatedAt: tx.updatedAt,
-    category: tx.category,
-  };
 }
 
 async function getPeriodSummary(
@@ -255,7 +209,7 @@ export async function getDashboardSummaryData(
       where: { userId },
       orderBy: [{ transactionDate: 'desc' }, { createdAt: 'desc' }, { id: 'desc' }],
       take: recentLimit,
-      include: { category: true },
+      include: transactionInclude,
     }),
   ]);
 
@@ -302,21 +256,7 @@ export async function getDashboardSummaryData(
       monthlyIncomeTarget: incomeTarget,
       monthlySavingsTarget: savingsTarget,
     },
-    recentTransactions: recent.map((tx) =>
-      toTransactionData({
-        id: tx.id,
-        categoryId: tx.categoryId,
-        type: tx.type,
-        amount: tx.amount,
-        description: tx.description,
-        transactionDate: tx.transactionDate,
-        paymentMethod: tx.paymentMethod,
-        notes: tx.notes,
-        createdAt: tx.createdAt,
-        updatedAt: tx.updatedAt,
-        category: toCategorySummary(tx.category),
-      })
-    ),
+    recentTransactions: recent.map(toTransactionData),
     incomeExpenseTrend: trend,
     spendingByCategory,
   };

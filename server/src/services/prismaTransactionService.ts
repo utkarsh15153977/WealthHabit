@@ -15,10 +15,10 @@ import {
 } from '../schemas/transactionSchemas.js';
 import { prisma } from '../config/prisma.js';
 import { addUtcDays, startOfUtcDay } from '../utils/date.js';
+import { transactionInclude } from './transactionDto.js';
+import type { TransactionWithCategory } from './transactionDto.js';
 
-export type TransactionWithCategory = Transaction & {
-  category: Category;
-};
+export type { TransactionWithCategory };
 
 export type ImportedTransactionRecord = Transaction & {
   category: Category;
@@ -45,7 +45,7 @@ export async function createTransaction(
       paymentMethod: input.paymentMethod ?? null,
       notes: input.notes ?? null,
     },
-    include: { category: true },
+    include: transactionInclude,
   });
 }
 
@@ -88,7 +88,7 @@ export async function listUserTransactions(
   const [transactions, total] = await Promise.all([
     prisma.transaction.findMany({
       where,
-      include: { category: true },
+      include: transactionInclude,
       orderBy: [{ transactionDate: 'desc' }, { createdAt: 'desc' }],
       skip,
       take: limit,
@@ -105,7 +105,7 @@ export async function findUserTransaction(
 ): Promise<TransactionWithCategory | null> {
   return prisma.transaction.findFirst({
     where: { id, userId },
-    include: { category: true },
+    include: transactionInclude,
   });
 }
 
@@ -127,7 +127,7 @@ export async function updateTransaction(
   return prisma.transaction.update({
     where: { id },
     data,
-    include: { category: true },
+    include: transactionInclude,
   });
 }
 
